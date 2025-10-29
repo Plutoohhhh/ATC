@@ -16,7 +16,7 @@ COMMANDS_TO_RUN = [
 ]
 
 # 2. 登录凭据 (如果不需要登录, 保持为 None)
-USERNAME = 'local'
+USERNAME = 'localll'
 PASSWORD = 'local'
 
 # 3. [重要] 机台的 OS 模式提示符 (来自你的 Chimp_serial.txt 日志)
