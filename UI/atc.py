@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QSizePolicy, QFrame)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QTextCursor, QColor
-
+from routes import sysconfig_read
 
 class LogWindow(QMainWindow):
     def __init__(self):
@@ -48,7 +48,7 @@ class LogWindow(QMainWindow):
             ("开始记录", self.start_logging),
             ("停止记录", self.stop_logging),
             ("清空日志", self.clear_log),
-            ("添加测试日志", self.add_test_log),
+            ("nanocom", sysconfig_read.sys_read.main()),
             ("信息日志", lambda: self.add_log("信息", "这是一条信息日志")),
             ("警告日志", lambda: self.add_log("警告", "这是一条警告日志")),
             ("错误日志", lambda: self.add_log("错误", "这是一条错误日志"))
