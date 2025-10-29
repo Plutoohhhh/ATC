@@ -15,7 +15,7 @@ class LogWindow(QMainWindow):
     def initUI(self):
         # 设置窗口标题和大小
         self.setWindowTitle('日志显示界面')
-        self.setGeometry(100, 100, 1000, 700)
+        self.setGeometry(100, 100, 1000, 600)
 
         # 创建中央部件
         central_widget = QWidget()
