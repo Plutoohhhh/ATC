@@ -3,13 +3,21 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QTextEdit, QScrollArea,
                              QSizePolicy, QFrame)
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal
 from PyQt5.QtGui import QFont, QTextCursor, QColor
 from routes import sysconfig_read
+
+
+class LogEmitter(QObject):
+    """用于在后台线程中发射日志信号的类"""
+    log_signal = pyqtSignal(str, str)  # level, message
+
 
 class LogWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.log_emitter = LogEmitter()
+        self.log_emitter.log_signal.connect(self.add_log)
         self.initUI()
 
     def initUI(self):
@@ -48,7 +56,7 @@ class LogWindow(QMainWindow):
             ("开始记录", self.start_logging),
             ("停止记录", self.stop_logging),
             ("清空日志", self.clear_log),
-            ("nanocom", sysconfig_read.sys_read.main()),
+            ("nanocom", self.run_nanocom),
             ("信息日志", lambda: self.add_log("信息", "这是一条信息日志")),
             ("警告日志", lambda: self.add_log("警告", "这是一条警告日志")),
             ("错误日志", lambda: self.add_log("错误", "这是一条错误日志"))
@@ -103,6 +111,20 @@ class LogWindow(QMainWindow):
         self.log_timer.timeout.connect(self.add_auto_log)
         self.log_count = 0
 
+    def run_nanocom(self):
+        """运行 nanocom 命令并在 UI 中显示输出"""
+        self.add_log("系统", "开始执行 nanocom 命令...")
+
+        # 创建 sys_read 实例并传递日志发射器
+        sys_reader = sysconfig_read.sys_read()
+        sys_reader.set_log_emitter(self.log_emitter)
+
+        # 在新线程中运行以避免阻塞 UI
+        try:
+            sys_reader.main()
+        except Exception as e:
+            self.add_log("错误", f"执行 nanocom 命令时发生错误: {str(e)}")
+
     def start_logging(self):
         if not self.logging_active:
             self.logging_active = True
@@ -139,11 +161,14 @@ class LogWindow(QMainWindow):
             color = "#4ec9b0"
         elif level == "系统":
             color = "#569cd6"
+        elif level == "程序输出":
+            color = "#dcdcaa"  # 浅黄色
+        elif level == "命令输入":
+            color = "#ce9178"  # 浅橙色
+        elif level == "系统输出":
+            color = "#9cdcfe"  # 浅蓝色
         else:
             color = "#d4d4d4"
-
-        # 格式化日志信息
-        log_entry = f"[{timestamp}] [{level}] {message}"
 
         # 添加带颜色的文本
         cursor = self.log_text.textCursor()
