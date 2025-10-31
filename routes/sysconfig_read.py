@@ -90,11 +90,11 @@ class sys_read:
         """
 
         # 策略 1: 尝试查找 C-line 端口 (如 Chimp_serial.txt)
-        c_line_match = re.search(r'Serial device \((\d+)\)\s*:\s*(\S+-ch-0)', output_before)
+        c_line_match = re.findall(r'Serial device \((\d+)\)\s*:\s*/dev/cu\.chimp-(\S+-ch-0)', output_before)
         if c_line_match:
-            port_number = c_line_match.group(1)
-            port_path = c_line_match.group(2)
-            self.log("程序输出", f"自动找到 C-line 端口: {port_number} ({port_path})")
+            port_number = c_line_match[0][0]
+            # port_path = c_line_match.group(2)
+            self.log("程序输出", f"自动找到 C-line 端口: {port_number}")
             return port_number
 
         # 策略 2: 尝试查找 S-line "base" 端口
