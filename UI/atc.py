@@ -1,28 +1,54 @@
+# atc.py (重构版本)
 import sys
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QTextEdit, QScrollArea,
                              QSizePolicy, QFrame)
-from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QTextCursor, QColor
-from routes import sysconfig_read
+
+from commands.check_diags_command import CheckDiagsCommand
+from utils.logger import UnifiedLogger
+from commands.nanocom_command import NanocomCommand
+from commands.collectlog_command import CollectlogCommand
 
 
-class LogEmitter(QObject):
-    """用于在后台线程中发射日志信号的类"""
-    log_signal = pyqtSignal(str, str)  # level, message
+class CommandThread(QThread):
+    """命令执行线程"""
+
+    def __init__(self, command_runner):
+        super().__init__()
+        self.command_runner = command_runner
+
+    def run(self):
+        self.command_runner.run_with_error_handling(
+            self.command_runner.__class__.__name__
+        )
 
 
 class LogWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.log_emitter = LogEmitter()
-        self.log_emitter.log_signal.connect(self.add_log)
+        # 创建统一的日志记录器
+        self.logger = UnifiedLogger(log_to_file=True)
+        self.logger.log_signal.connect(self.add_log)
+
         self.initUI()
+        self.setup_commands()
+
+    def setup_commands(self):
+        default_spartan_name = "YourSpartanModemName"  # 修改为实际的名称
+        """设置可用的命令"""
+        self.commands = {
+            "nanocom": NanocomCommand(self.logger),
+            "collectlog": CollectlogCommand(self.logger),
+            "check_diags": CheckDiagsCommand(self.logger, self),
+            # 后续添加新命令只需在这里注册
+        }
 
     def initUI(self):
         # 设置窗口标题和大小
-        self.setWindowTitle('日志显示界面')
+        self.setWindowTitle('自动化测试控制台')
         self.setGeometry(100, 100, 1000, 600)
 
         # 创建中央部件
@@ -40,7 +66,7 @@ class LogWindow(QMainWindow):
         # 创建右侧日志显示区域
         self.create_right_panel(main_layout)
 
-        # 设置布局比例（左侧1:右侧4）
+        # 设置布局比例
         main_layout.setStretchFactor(self.left_widget, 1)
         main_layout.setStretchFactor(self.right_widget, 4)
 
@@ -51,30 +77,47 @@ class LogWindow(QMainWindow):
         left_layout.setSpacing(10)
         left_layout.setAlignment(Qt.AlignTop)
 
-        # 创建按钮
+        # 创建命令按钮
         buttons_info = [
             ("开始记录", self.start_logging),
             ("停止记录", self.stop_logging),
             ("清空日志", self.clear_log),
-            ("nanocom", self.run_nanocom),
-            ("信息日志", lambda: self.add_log("信息", "这是一条信息日志")),
-            ("警告日志", lambda: self.add_log("警告", "这是一条警告日志")),
-            ("错误日志", lambda: self.add_log("错误", "这是一条错误日志"))
+            ("执行 Nanocom", lambda: self.execute_command("nanocom")),
+            ("执行 Collectlog", lambda: self.execute_command("collectlog")),
+            ("检测 Diags", lambda: self.execute_command("check_diags")),
+            # 添加新命令按钮只需在这里添加一行
         ]
 
-        self.buttons = []
+        self.buttons = {}
         for text, slot in buttons_info:
             button = QPushButton(text)
             button.setMinimumHeight(40)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.clicked.connect(slot)
             left_layout.addWidget(button)
-            self.buttons.append(button)
+            # 存储按钮引用以便后续操作
+            if "执行" in text:
+                command_name = text.replace("执行 ", "").lower()
+                self.buttons[command_name] = button
 
         # 添加弹性空间
         left_layout.addStretch(1)
-
         main_layout.addWidget(self.left_widget)
+
+    def execute_command(self, command_name):
+        """执行指定命令"""
+        if command_name in self.commands:
+            # 禁用按钮防止重复点击
+            self.buttons[command_name].setEnabled(False)
+
+            # 在新线程中执行命令
+            self.command_thread = CommandThread(self.commands[command_name])
+            self.command_thread.finished.connect(
+                lambda: self.buttons[command_name].setEnabled(True)
+            )
+            self.command_thread.start()
+        else:
+            self.logger.log("错误", f"未知命令: {command_name}")
 
     def create_right_panel(self, main_layout):
         # 右侧部件
@@ -86,11 +129,9 @@ class LogWindow(QMainWindow):
         self.log_text.setReadOnly(True)
         self.log_text.setLineWrapMode(QTextEdit.NoWrap)
 
-        # 设置字体
+        # 设置字体和样式
         font = QFont("Consolas", 10)
         self.log_text.setFont(font)
-
-        # 设置样式
         self.log_text.setStyleSheet("""
             QTextEdit {
                 background-color: #1e1e1e;
@@ -102,7 +143,6 @@ class LogWindow(QMainWindow):
         """)
 
         right_layout.addWidget(self.log_text)
-
         main_layout.addWidget(self.right_widget)
 
         # 日志记录状态
@@ -111,64 +151,43 @@ class LogWindow(QMainWindow):
         self.log_timer.timeout.connect(self.add_auto_log)
         self.log_count = 0
 
-    def run_nanocom(self):
-        """运行 nanocom 命令并在 UI 中显示输出"""
-        self.add_log("系统", "开始执行 nanocom 命令...")
-
-        # 创建 sys_read 实例并传递日志发射器
-        sys_reader = sysconfig_read.sys_read()
-        sys_reader.set_log_emitter(self.log_emitter)
-
-        # 在新线程中运行以避免阻塞 UI
-        try:
-            sys_reader.main()
-        except Exception as e:
-            self.add_log("错误", f"执行 nanocom 命令时发生错误: {str(e)}")
-
     def start_logging(self):
         if not self.logging_active:
             self.logging_active = True
-            self.log_timer.start(1000)  # 每秒添加一条日志
-            self.add_log("系统", "开始自动记录日志")
+            self.log_timer.start(1000)
+            self.logger.log("系统", "开始自动记录日志")
 
     def stop_logging(self):
         if self.logging_active:
             self.logging_active = False
             self.log_timer.stop()
-            self.add_log("系统", "停止自动记录日志")
+            self.logger.log("系统", "停止自动记录日志")
 
     def clear_log(self):
         self.log_text.clear()
         self.log_count = 0
 
-    def add_test_log(self):
-        self.add_log("测试", f"这是第 {self.log_count} 条测试日志")
-        self.log_count += 1
-
     def add_auto_log(self):
-        self.add_log("自动", f"自动生成的日志 #{self.log_count}")
+        self.logger.log("自动", f"自动生成的日志 #{self.log_count}")
         self.log_count += 1
 
     def add_log(self, level, message):
+        """添加日志到UI显示"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # 根据日志级别设置颜色
-        if level == "错误":
-            color = "#f44747"
-        elif level == "警告":
-            color = "#ff8800"
-        elif level == "信息":
-            color = "#4ec9b0"
-        elif level == "系统":
-            color = "#569cd6"
-        elif level == "程序输出":
-            color = "#dcdcaa"  # 浅黄色
-        elif level == "命令输入":
-            color = "#ce9178"  # 浅橙色
-        elif level == "系统输出":
-            color = "#9cdcfe"  # 浅蓝色
-        else:
-            color = "#d4d4d4"
+        color_map = {
+            "错误": "#f44747",
+            "警告": "#ff8800",
+            "信息": "#4ec9b0",
+            "系统": "#569cd6",
+            "程序输出": "#dcdcaa",
+            "命令输入": "#ce9178",
+            "系统输出": "#9cdcfe",
+            "自动": "#c586c0"
+        }
+
+        color = color_map.get(level, "#d4d4d4")
 
         # 添加带颜色的文本
         cursor = self.log_text.textCursor()
@@ -200,6 +219,11 @@ class LogWindow(QMainWindow):
         g = int(hex_color[2:4], 16)
         b = int(hex_color[4:6], 16)
         return QColor(r, g, b)
+
+    def closeEvent(self, event):
+        """窗口关闭事件"""
+        self.logger.close()
+        super().closeEvent(event)
 
 
 def main():

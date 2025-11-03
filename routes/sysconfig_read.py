@@ -16,7 +16,7 @@ COMMANDS_TO_RUN = [
 ]
 
 # 2. 登录凭据 (如果不需要登录, 保持为 None)
-USERNAME = 'localll'
+USERNAME = 'local'
 PASSWORD = 'local'
 
 # 3. [重要] 机台的 OS 模式提示符 (来自你的 Chimp_serial.txt 日志)
@@ -31,56 +31,19 @@ LOG_FILE_NAME = "nanocom_session_full.log"
 TIMEOUT = 15
 
 
-class DualLogger:
-    """双重日志记录器：同时记录到文件和UI"""
-
-    def __init__(self, log_file_path, log_emitter):
-        self.log_file = open(log_file_path, 'wb')
-        self.log_emitter = log_emitter
-
-    def write(self, data):
-        # 写入文件
-        self.log_file.write(data)
-        self.log_file.flush()
-
-        # 发送到UI
-        if self.log_emitter and data.strip():
-            try:
-                # 解码数据并去除空白字符
-                decoded_data = data.decode('utf-8', errors='ignore').strip()
-                if decoded_data:
-                    # 根据内容判断类型
-                    if decoded_data.startswith(('pwd', 'ls', 'date', 'login:', 'username:', 'password:')):
-                        level = "命令输入"
-                    elif TARGET_PROMPT_STRING in decoded_data:
-                        level = "系统输出"
-                    else:
-                        level = "系统输出"
-
-                    self.log_emitter.log_signal.emit(level, decoded_data)
-            except Exception:
-                pass
-
-    def flush(self):
-        self.log_file.flush()
-
-    def close(self):
-        self.log_file.close()
-
-
 class sys_read:
     def __init__(self):
-        self.log_emitter = None
+        self.logger = None  # 改为使用统一的logger
         self.dual_logger = None
 
-    def set_log_emitter(self, log_emitter):
-        """设置日志发射器，用于将输出发送到 UI"""
-        self.log_emitter = log_emitter
+    def set_logger(self, logger):
+        """设置统一的日志记录器"""
+        self.logger = logger
 
     def log(self, level, message):
         """统一的日志方法"""
-        if self.log_emitter:
-            self.log_emitter.log_signal.emit(level, message)
+        if self.logger:
+            self.logger.log(level, message)
         else:
             print(f"[{level}] {message}")
 
@@ -130,24 +93,55 @@ class sys_read:
             return
 
         shell_prompt = f"{os.getlogin()}@localhost % "
-        command_to_run = "nanocom -y"
+        # 修改：明确指定使用 /bin/bash 来执行命令
+        command_to_run = "/bin/bash -c 'nanocom -y'"
 
         try:
-            # 创建双重日志记录器
-            self.dual_logger = DualLogger(full_log_path, self.log_emitter)
-
-            # 1. 写入模拟的启动命令
-            self.dual_logger.write(f"{shell_prompt}{command_to_run}\n".encode('utf-8'))
+            # 创建文件日志记录器
+            self.file_logger = open(full_log_path, 'wb')
 
             self.log("系统", "自动化脚本启动")
             self.log("系统", f"目标 OS 提示符已设为: '{TARGET_PROMPT_STRING}'")
             self.log("系统", f"完整会话日志将保存到: {full_log_path}")
+            self.log("系统", "使用 /bin/bash 执行命令")
 
-            # 2. 启动 nanocom 进程
-            child = pexpect.spawn(command_to_run, timeout=TIMEOUT)
+            # 2. 启动 nanocom 进程 - 使用列表形式明确指定 shell 和命令
+            # 修改：使用列表形式明确指定 shell 和命令参数
+            child = pexpect.spawn('/bin/bash', ['-c', 'nanocom -y'], timeout=TIMEOUT)
 
-            # 3. 将所有 nanocom 的输入输出 100% 写入双重日志
-            child.logfile = self.dual_logger
+            # 3. 创建自定义的 logfile 来同时记录到文件和统一日志
+            class CustomLogger:
+                def __init__(self, file_logger, unified_logger):
+                    self.file_logger = file_logger
+                    self.unified_logger = unified_logger
+
+                def write(self, data):
+                    # 写入文件
+                    self.file_logger.write(data)
+                    self.file_logger.flush()
+
+                    # 发送到统一日志记录器
+                    if data.strip():
+                        try:
+                            decoded_data = data.decode('utf-8', errors='ignore').strip()
+                            if decoded_data:
+                                # 根据内容判断类型
+                                if decoded_data.startswith(('pwd', 'ls', 'date', 'login:', 'username:', 'password:')):
+                                    level = "命令输入"
+                                elif TARGET_PROMPT_STRING in decoded_data:
+                                    level = "系统输出"
+                                else:
+                                    level = "系统输出"
+
+                                self.unified_logger.log(level, decoded_data)
+                        except Exception:
+                            pass
+
+                def flush(self):
+                    self.file_logger.flush()
+
+            # 设置自定义的 logfile
+            child.logfile = CustomLogger(self.file_logger, self.logger)
 
             # 4. 动态端口选择
             self.log("程序输出", "正在等待 nanocom 加载设备列表...")
@@ -264,8 +258,8 @@ class sys_read:
         finally:
             if 'child' in locals() and child.isalive():
                 child.terminate()
-            if self.dual_logger:
-                self.dual_logger.close()
+            if hasattr(self, 'file_logger') and self.file_logger:
+                self.file_logger.close()
             self.log("系统", f"脚本结束，完整原始日志保存在 {full_log_path}")
 
 
