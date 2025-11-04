@@ -83,7 +83,7 @@ class sys_read:
 
         return None
 
-    def main(self):
+    def main(self, keep_alive=False):
         try:
             desktop_path = os.path.expanduser("~/Desktop")
             os.makedirs(desktop_path, exist_ok=True)
@@ -107,7 +107,7 @@ class sys_read:
 
             # 2. 启动 nanocom 进程 - 使用列表形式明确指定 shell 和命令
             # 修改：使用列表形式明确指定 shell 和命令参数
-            child = pexpect.spawn('/bin/bash', ['-c', 'nanocom -y'], timeout=TIMEOUT)
+            child = pexpect.spawn('/bin/bash', ['-c', '/usr/local/bin/nanocom -y'], timeout=TIMEOUT)
 
             # 3. 创建自定义的 logfile 来同时记录到文件和统一日志
             class CustomLogger:
@@ -256,10 +256,10 @@ class sys_read:
         except Exception as e:
             self.log("错误", f"发生意外的 Python 错误: {e}")
         finally:
-            if 'child' in locals() and child.isalive():
-                child.terminate()
-            if hasattr(self, 'file_logger') and self.file_logger:
-                self.file_logger.close()
+            # if 'child' in locals() and child.isalive():
+            #     child.terminate()
+            # if hasattr(self, 'file_logger') and self.file_logger:
+            #     self.file_logger.close()
             self.log("系统", f"脚本结束，完整原始日志保存在 {full_log_path}")
 
 

@@ -4,7 +4,7 @@ from routes import collectlog
 
 class CollectlogCommand(CommandRunner):
     def execute(self):
-        collector = collectlog.DeviceLogCollector()
+        collector = collectlog.RebootLogCollector()
         # 将统一的logger传递给collector
         collector.set_logger(self.logger)
         return collector.main()

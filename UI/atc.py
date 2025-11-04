@@ -6,8 +6,6 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QSizePolicy, QFrame)
 from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QTextCursor, QColor
-
-from commands.check_diags_command import CheckDiagsCommand
 from utils.logger import UnifiedLogger
 from commands.nanocom_command import NanocomCommand
 from commands.collectlog_command import CollectlogCommand
@@ -42,7 +40,6 @@ class LogWindow(QMainWindow):
         self.commands = {
             "nanocom": NanocomCommand(self.logger),
             "collectlog": CollectlogCommand(self.logger),
-            "check_diags": CheckDiagsCommand(self.logger, self),
             # 后续添加新命令只需在这里注册
         }
 
@@ -79,26 +76,24 @@ class LogWindow(QMainWindow):
 
         # 创建命令按钮
         buttons_info = [
-            ("开始记录", self.start_logging),
-            ("停止记录", self.stop_logging),
-            ("清空日志", self.clear_log),
-            ("执行 Nanocom", lambda: self.execute_command("nanocom")),
-            ("执行 Collectlog", lambda: self.execute_command("collectlog")),
-            ("检测 Diags", lambda: self.execute_command("check_diags")),
+            ("开始记录", "start_logging", self.start_logging),
+            ("停止记录", "stop_logging", self.stop_logging),
+            ("清空日志", "clear_log", self.clear_log),
+            ("执行 Nanocom", "nanocom", lambda: self.execute_command("nanocom")),
+            ("执行 Collectlog", "collectlog", lambda: self.execute_command("collectlog")),
+            ("检测 Diags", "check_diags", lambda: self.execute_command("check_diags")),
+            ("Collect", "collect", lambda: self.execute_command("collect")),
             # 添加新命令按钮只需在这里添加一行
         ]
 
         self.buttons = {}
-        for text, slot in buttons_info:
+        for text, command_name, slot in buttons_info:
             button = QPushButton(text)
             button.setMinimumHeight(40)
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             button.clicked.connect(slot)
             left_layout.addWidget(button)
-            # 存储按钮引用以便后续操作
-            if "执行" in text:
-                command_name = text.replace("执行 ", "").lower()
-                self.buttons[command_name] = button
+            self.buttons[command_name] = button
 
         # 添加弹性空间
         left_layout.addStretch(1)
