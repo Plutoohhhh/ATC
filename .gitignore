@@ -1,2 +1,7 @@
 # 虚拟环境
 env/
+
+build/
+dist/
+
+ATC.spec

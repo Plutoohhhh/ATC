@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QTextCursor, QColor
 from utils.logger import UnifiedLogger
 from commands.nanocom_command import NanocomCommand
-from commands.collectlog_command import CollectlogCommand
+from commands.reboot_log_command import RebootLogCommand
 
 
 class CommandThread(QThread):
@@ -39,7 +39,7 @@ class LogWindow(QMainWindow):
         """设置可用的命令"""
         self.commands = {
             "nanocom": NanocomCommand(self.logger),
-            "collectlog": CollectlogCommand(self.logger),
+            "reboot_log": RebootLogCommand(self.logger),
             # 后续添加新命令只需在这里注册
         }
 
@@ -80,9 +80,7 @@ class LogWindow(QMainWindow):
             ("停止记录", "stop_logging", self.stop_logging),
             ("清空日志", "clear_log", self.clear_log),
             ("执行 Nanocom", "nanocom", lambda: self.execute_command("nanocom")),
-            ("执行 Collectlog", "collectlog", lambda: self.execute_command("collectlog")),
-            ("检测 Diags", "check_diags", lambda: self.execute_command("check_diags")),
-            ("Collect", "collect", lambda: self.execute_command("collect")),
+            ("执行 reboot_log", "reboot_log", lambda: self.execute_command("reboot_log")),
             # 添加新命令按钮只需在这里添加一行
         ]
 

@@ -17,4 +17,4 @@ pyinstaller --onefile --windowed --name="ATC" \
   --add-data="commands:commands" \
   --add-data="routes:routes" \
   --add-data="utils:utils" \
-  atc.py
+  UI/atc.py

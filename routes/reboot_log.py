@@ -1,9 +1,6 @@
 import re
 import time
-import shutil
-import subprocess
 import pexpect
-from typing import Optional
 from pathlib import Path
 
 
@@ -31,8 +28,7 @@ class RebootLogCollector:
 
         self.log("程序输出", "正在获取设备序列号...")
         self.child.sendline("system_profiler SPHardwareDataType | grep 'Serial Number' | awk '{print $4}'")
-        time.sleep(2)
-        self.child.expect("local@locals-Mac ~ %")
+        self.child.expect("local@locals-Mac ~ %",timeout=5)
         response = self.child.before.decode()
 
         # 提取序列号
@@ -47,14 +43,15 @@ class RebootLogCollector:
         return "unknown_device"
 
     def find_port_number(self, output_before):
-        """
-        动态查找 C-line 或 S-line 端口。
-        """
+        """获取端口"""
         c_line_match = re.findall(r'Serial device \((\d+)\)\s*:\s*/dev/cu\.chimp-(\S+-ch-0)', output_before)
         if c_line_match:
             port_number = c_line_match[0][0]
-            self.log("程序输出", f"自动找到 C-line 端口: {port_number}")
+            self.log("程序输出", f"找到端口: {port_number}")
             return port_number
+        else:
+            self.log("错误", "未找到合适的端口")
+            return None
 
     def auto_login_via_nanocom(self) -> bool:
         """通过nanocom自动登录设备"""
@@ -63,11 +60,19 @@ class RebootLogCollector:
         try:
             # 启动nanocom并自动选择端口
             self.child = pexpect.spawn('/usr/local/bin/nanocom -y')
-            self.child.expect("Serial device", timeout=10)
+            expect_result = self.child.expect(
+                [pexpect.TIMEOUT, "Select a device by its number"],
+                timeout=5
+            )
 
-            output_before = self.child.before.decode('utf-8', 'ignore')
-            port = self.find_port_number(output_before)
-            self.child.sendline(port)
+            if expect_result == 1:
+                output_before = self.child.before.decode('utf-8', 'ignore')
+                port = self.find_port_number(output_before)
+
+                if port is None:
+                    self.log("错误", "未找到可用的串口设备")
+                    return False
+                self.child.sendline(port)
 
             # 等待登录提示
             expect_result = self.child.expect(
@@ -79,14 +84,13 @@ class RebootLogCollector:
                 self.child.sendline("local")
 
                 # 检查是否需要密码
-                auth_result = self.child.expect([pexpect.TIMEOUT, "password:"], timeout=5)
+                auth_result = self.child.expect([pexpect.TIMEOUT, "Password:"], timeout=5)
                 if auth_result == 1:
                     self.log("程序输出", "输入密码...")
                     self.child.sendline("local")
-                    time.sleep(2)
 
                 # 验证登录成功
-                if self.child.expect([pexpect.TIMEOUT, "local@locals-Mac ~ %"], timeout=5) == 1:
+                if self.child.expect([pexpect.TIMEOUT, "local@locals-Mac ~ %"], timeout=60) == 1:
                     self.log("程序输出", "登录成功!")
 
                     # 获取设备序列号和IP地址
@@ -111,7 +115,7 @@ class RebootLogCollector:
             # 等待密码提示或继续提示
             expect_result = self.child.expect(
                 [pexpect.TIMEOUT, "Press 'Enter' to continue. Ctrl+\\ to cancel."],
-                timeout=2
+                timeout=5
             )
 
             if expect_result == 1:  # 检测到继续提示
@@ -122,7 +126,7 @@ class RebootLogCollector:
                 self.log("程序输出", "等待sysdiagnose完成...")
                 expect_result = self.child.expect(
                     [pexpect.TIMEOUT, "Output available at", "local@locals-Mac ~ %"],
-                    timeout=600  # 5分钟超时
+                    timeout=600  # 10分钟超时
                 )
 
                 if expect_result == 1 or expect_result == 2:  # sysdiagnose完成
@@ -156,8 +160,7 @@ class RebootLogCollector:
         device_folder = f"/tmp/{self.device_serial}"
         self.log("程序输出", f"在设备上创建文件夹: {device_folder}")
         self.child.sendline(f"mkdir -p {device_folder}")
-        time.sleep(1)
-        self.child.expect("local@locals-Mac ~ %")
+        self.child.expect("local@locals-Mac ~ %",timeout=5)
 
         # 复制文件到设备上的文件夹
         for log_name, device_path in log_paths.items():
@@ -203,11 +206,17 @@ class RebootLogCollector:
         try:
             # 使用pexpect执行SCP命令并自动输入密码
             scp_child = pexpect.spawn(scp_command)
-            scp_result = scp_child.expect(['password:', pexpect.TIMEOUT, pexpect.EOF], timeout=30)
+            scp_result = scp_child.expect(['Are you sure you want to continue connecting (yes/no/[fingerprint])?:', pexpect.TIMEOUT, pexpect.EOF], timeout=10)
 
-            if scp_result == 0:  # 需要密码
+            if scp_result == 0:
+                scp_child.sendline("yes")
+                scp_child.expect(pexpect.EOF, timeout=5)
+
+                scp_child.expect("Password:", timeout=5)
                 scp_child.sendline("local")
-                scp_child.expect(pexpect.EOF, timeout=60)
+                self.log("程序输出", "开始SCP传输")
+
+                scp_child.expect("local@locals-Mac ~ %", timeout=60)
                 self.log("程序输出", "SCP传输完成")
             else:
                 self.log("错误", "SCP传输失败或超时")
