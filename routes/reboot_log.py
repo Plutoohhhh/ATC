@@ -11,7 +11,6 @@ class RebootLogCollector:
         self.logger = None
         self.terminal_logger = None
         self.device_serial = None
-        self.device_ip = None
 
     def set_logger(self, logger):
         self.logger = logger
@@ -138,13 +137,13 @@ class RebootLogCollector:
             )
 
             if expect_result == 1:  # 检测到登录提示
-                self.log("程序输出", "输入用户名...")
+                self.log("程序输出", "输入用户名local")
                 self.sendline_with_logging("local")
 
                 # 检查是否需要密码
                 auth_result = self.expect_with_logging([pexpect.TIMEOUT, "Password:"], timeout=5)
                 if auth_result == 1:
-                    self.log("程序输出", "输入密码...")
+                    self.log("程序输出", "输入密码local")
                     self.sendline_with_logging("local")
 
                 # 验证登录成功
@@ -172,7 +171,7 @@ class RebootLogCollector:
 
             # 等待密码提示或继续提示
             expect_result = self.expect_with_logging(
-                [pexpect.TIMEOUT, "Press 'Enter' to continue. Ctrl+\\ to cancel."],
+                [pexpect.TIMEOUT, "Press 'Enter' to continue. Ctrl+\ to cancel."],
                 timeout=5
             )
 
@@ -181,7 +180,7 @@ class RebootLogCollector:
                 self.sendline_with_logging("")  # 发送回车
 
                 # 等待sysdiagnose完成
-                self.log("程序输出", "等待sysdiagnose完成...")
+                self.log("程序输出", "等待sysdiagnose完成")
                 expect_result = self.expect_with_logging(
                     [pexpect.TIMEOUT, "Output available at", "local@locals-Mac ~ %"],
                     timeout=600  # 10分钟超时
@@ -213,7 +212,7 @@ class RebootLogCollector:
         }
 
         # 在设备上创建文件夹
-        device_folder = f"/tmp/{self.device_serial}"
+        device_folder = f"/Desktop/{self.device_serial}"
         self.log("程序输出", f"在设备上创建文件夹: {device_folder}")
         self.sendline_with_logging(f"mkdir -p {device_folder}")
         self.expect_with_logging("local@locals-Mac ~ %", timeout=5)
