@@ -9,11 +9,14 @@ class RebootLogCollector:
         self.host_desktop_path = Path.home() / "Desktop"
         self.child = None
         self.logger = None
+        self.terminal_logger = None
         self.device_serial = None
         self.device_ip = None
 
     def set_logger(self, logger):
         self.logger = logger
+        if logger:
+            self.terminal_logger = logger.get_terminal_logger()
 
     def log(self, level, message):
         if self.logger:
@@ -21,14 +24,61 @@ class RebootLogCollector:
         else:
             print(f"[{level}] {message}")
 
+    def log_terminal_send(self, data):
+        """记录发送到终端的数据"""
+        if self.terminal_logger:
+            self.terminal_logger.log_send(data)
+
+    def log_terminal_receive(self, data):
+        """记录从终端接收的数据"""
+        if self.terminal_logger:
+            self.terminal_logger.log_receive(data)
+
+    def log_terminal_expect(self, pattern):
+        """记录期望的模式"""
+        if self.terminal_logger:
+            self.terminal_logger.log_expect(str(pattern))
+
+    def log_terminal_timeout(self):
+        """记录超时"""
+        if self.terminal_logger:
+            self.terminal_logger.log_timeout()
+
+    def expect_with_logging(self, pattern_list, timeout=None):
+        """带日志记录的expect方法"""
+        self.log_terminal_expect(pattern_list)
+        try:
+            result = self.child.expect(pattern_list, timeout=timeout)
+            # 记录匹配到的内容
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+            if self.child.after:
+                self.log_terminal_receive(self.child.after)
+            return result
+        except pexpect.TIMEOUT:
+            self.log_terminal_timeout()
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+            raise
+        except Exception as e:
+            self.log("错误", f"expect操作异常: {e}")
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+            raise
+
+    def sendline_with_logging(self, data):
+        """带日志记录的sendline方法"""
+        self.log_terminal_send(data + "\n")
+        self.child.sendline(data)
+
     def get_device_serial_number(self) -> str:
         """获取设备序列号"""
         if not self.child:
             return "unknown_device"
 
         self.log("程序输出", "正在获取设备序列号...")
-        self.child.sendline("system_profiler SPHardwareDataType | grep 'Serial Number' | awk '{print $4}'")
-        self.child.expect("local@locals-Mac ~ %",timeout=5)
+        self.sendline_with_logging("system_profiler SPHardwareDataType | grep 'Serial Number' | awk '{print $4}'")
+        self.expect_with_logging("local@locals-Mac ~ %", timeout=5)
         response = self.child.before.decode()
 
         # 提取序列号
@@ -60,7 +110,11 @@ class RebootLogCollector:
         try:
             # 启动nanocom并自动选择端口
             self.child = pexpect.spawn('/usr/local/bin/nanocom -y')
-            expect_result = self.child.expect(
+            # 记录初始输出
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+
+            expect_result = self.expect_with_logging(
                 [pexpect.TIMEOUT, "Select a device by its number"],
                 timeout=5
             )
@@ -72,25 +126,29 @@ class RebootLogCollector:
                 if port is None:
                     self.log("错误", "未找到可用的串口设备")
                     return False
-                self.child.sendline(port)
+                self.sendline_with_logging(port)
+                start_time = time.time()
+                while time.time() - start_time <= 2:
+                    self.sendline_with_logging("")
+                    time.sleep(1)
 
             # 等待登录提示
-            expect_result = self.child.expect(
+            expect_result = self.expect_with_logging(
                 [pexpect.TIMEOUT, "login:", "local@locals-Mac ~ %"], timeout=30
             )
 
             if expect_result == 1:  # 检测到登录提示
                 self.log("程序输出", "输入用户名...")
-                self.child.sendline("local")
+                self.sendline_with_logging("local")
 
                 # 检查是否需要密码
-                auth_result = self.child.expect([pexpect.TIMEOUT, "Password:"], timeout=5)
+                auth_result = self.expect_with_logging([pexpect.TIMEOUT, "Password:"], timeout=5)
                 if auth_result == 1:
                     self.log("程序输出", "输入密码...")
-                    self.child.sendline("local")
+                    self.sendline_with_logging("local")
 
                 # 验证登录成功
-                if self.child.expect([pexpect.TIMEOUT, "local@locals-Mac ~ %"], timeout=60) == 1:
+                if self.expect_with_logging([pexpect.TIMEOUT, "local@locals-Mac ~ %"], timeout=60) == 1:
                     self.log("程序输出", "登录成功!")
 
                     # 获取设备序列号和IP地址
@@ -110,21 +168,21 @@ class RebootLogCollector:
 
         try:
             # 发送sudo sysdiagnose命令
-            self.child.sendline("sudo sysdiagnose")
+            self.sendline_with_logging("sudo sysdiagnose")
 
             # 等待密码提示或继续提示
-            expect_result = self.child.expect(
+            expect_result = self.expect_with_logging(
                 [pexpect.TIMEOUT, "Press 'Enter' to continue. Ctrl+\\ to cancel."],
                 timeout=5
             )
 
             if expect_result == 1:  # 检测到继续提示
                 self.log("程序输出", "按下Enter继续...")
-                self.child.sendline("")  # 发送回车
+                self.sendline_with_logging("")  # 发送回车
 
                 # 等待sysdiagnose完成
                 self.log("程序输出", "等待sysdiagnose完成...")
-                expect_result = self.child.expect(
+                expect_result = self.expect_with_logging(
                     [pexpect.TIMEOUT, "Output available at", "local@locals-Mac ~ %"],
                     timeout=600  # 10分钟超时
                 )
@@ -143,7 +201,6 @@ class RebootLogCollector:
             self.log("错误", f"运行sysdiagnose失败: {e}")
             return False
 
-
     def copy_files_on_device(self) -> str:
         """在设备上创建文件夹并复制日志文件"""
         # 日志路径定义
@@ -155,26 +212,25 @@ class RebootLogCollector:
             "os_logs": "/FactoryLogs/"
         }
 
-
         # 在设备上创建文件夹
         device_folder = f"/tmp/{self.device_serial}"
         self.log("程序输出", f"在设备上创建文件夹: {device_folder}")
-        self.child.sendline(f"mkdir -p {device_folder}")
-        self.child.expect("local@locals-Mac ~ %",timeout=5)
+        self.sendline_with_logging(f"mkdir -p {device_folder}")
+        self.expect_with_logging("local@locals-Mac ~ %", timeout=5)
 
         # 复制文件到设备上的文件夹
         for log_name, device_path in log_paths.items():
             self.log("程序输出", f"复制: {device_path} 到 {device_folder}")
 
             # 检查设备上路径是否存在
-            self.child.sendline(f"test -e {device_path} && echo 'EXISTS' || echo 'NOT_EXISTS'")
-            self.child.expect("local@locals-Mac ~ %")
+            self.sendline_with_logging(f"test -e {device_path} && echo 'EXISTS' || echo 'NOT_EXISTS'")
+            self.expect_with_logging("local@locals-Mac ~ %")
             response = self.child.before.decode()
 
             if "EXISTS" in response:
                 # 复制文件或目录
-                self.child.sendline(f"cp -r {device_path} {device_folder}/")
-                self.child.expect("local@locals-Mac ~ %")
+                self.sendline_with_logging(f"cp -r {device_path} {device_folder}/")
+                self.expect_with_logging("local@locals-Mac ~ %")
                 self.log("程序输出", f"已复制: {device_path}")
             else:
                 self.log("警告", f"路径不存在: {device_path}")
@@ -185,6 +241,7 @@ class RebootLogCollector:
         """关闭nanocom连接"""
         if self.child and self.child.isalive():
             try:
+                self.sendline_with_logging("exit")
                 self.child.sendcontrol("a")
                 self.child.sendcontrol("x")
                 self.child.close()
@@ -200,29 +257,71 @@ class RebootLogCollector:
 
         # 通过scp将文件夹从设备复制到主机
         self.log("程序输出", "在主机上执行SCP命令...")
-        scp_command = f"scp -r local@locals-Mac ~.local:{device_folder} {host_folder}"
+        scp_command = f"scp -r local@locals-Mac.local:{device_folder} {host_folder}"
         self.log("程序输出", f"执行SCP命令: {scp_command}")
 
         try:
+            # 记录命令
+            if self.logger:
+                self.logger.log_command(
+                    "文件传输",
+                    f"SCP从设备复制文件夹: {device_folder}",
+                    "开始",
+                    {"源路径": device_folder, "目标路径": str(host_folder)}
+                )
+
             # 使用pexpect执行SCP命令并自动输入密码
             scp_child = pexpect.spawn(scp_command)
-            scp_result = scp_child.expect(['Are you sure you want to continue connecting (yes/no/[fingerprint])?:', pexpect.TIMEOUT, pexpect.EOF], timeout=10)
 
-            if scp_result == 0:
+            # 设置终端日志记录
+            if self.terminal_logger:
+                scp_child.logfile_read = self.terminal_logger.log_file
+                scp_child.logfile_send = self.terminal_logger.log_file
+
+            scp_result = scp_child.expect(['Are you sure you want to continue connecting (yes/no/[fingerprint])?:',
+                                           'Password:',
+                                           pexpect.TIMEOUT,
+                                           pexpect.EOF], timeout=10)
+
+            if scp_result == 0:  # 首次连接确认
                 scp_child.sendline("yes")
-                scp_child.expect(pexpect.EOF, timeout=5)
+                scp_result = scp_child.expect(['Password:', pexpect.TIMEOUT, pexpect.EOF], timeout=5)
 
-                scp_child.expect("Password:", timeout=5)
+            if scp_result == 1 or scp_result == 0:  # 需要密码
                 scp_child.sendline("local")
                 self.log("程序输出", "开始SCP传输")
 
-                scp_child.expect("local@locals-Mac ~ %", timeout=60)
+                # 等待传输完成
+                scp_child.expect(pexpect.EOF, timeout=60)
                 self.log("程序输出", "SCP传输完成")
+
+                # 记录成功
+                if self.logger:
+                    self.logger.log_command(
+                        "文件传输",
+                        f"SCP从设备复制文件夹: {device_folder}",
+                        "成功",
+                        {"源路径": device_folder, "目标路径": str(host_folder)}
+                    )
             else:
                 self.log("错误", "SCP传输失败或超时")
+                if self.logger:
+                    self.logger.log_command(
+                        "文件传输",
+                        f"SCP从设备复制文件夹: {device_folder}",
+                        "失败",
+                        {"错误": "连接失败或超时"}
+                    )
 
         except Exception as e:
             self.log("错误", f"SCP传输失败: {e}")
+            if self.logger:
+                self.logger.log_command(
+                    "文件传输",
+                    f"SCP从设备复制文件夹: {device_folder}",
+                    "失败",
+                    {"错误": str(e)}
+                )
 
     def main(self):
         self.log("系统", "=== 设备日志自动收集脚本 ===")
@@ -262,8 +361,17 @@ def main():
         print("请运行: pip install pexpect")
         return
 
+    # 创建日志记录器
+    from utils.logger import UnifiedLogger
+    logger = UnifiedLogger()
+
     collector = RebootLogCollector()
-    collector.main()
+    collector.set_logger(logger)
+
+    try:
+        collector.main()
+    finally:
+        logger.close()
 
 
 if __name__ == "__main__":
