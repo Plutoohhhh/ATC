@@ -171,9 +171,10 @@ class RebootLogCollector:
 
             # 等待密码提示或继续提示
             expect_result = self.expect_with_logging(
-                [pexpect.TIMEOUT, "Press 'Enter' to continue. Ctrl+\ to cancel."],
+                [pexpect.TIMEOUT, "Press 'Enter' to continue"],
                 timeout=5
             )
+
 
             if expect_result == 1:  # 检测到继续提示
                 self.log("程序输出", "按下Enter继续...")

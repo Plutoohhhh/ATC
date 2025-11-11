@@ -43,13 +43,62 @@ class sys_read:
     def set_logger(self, logger):
         """设置统一的日志记录器"""
         self.logger = logger
+        if logger:
+            self.terminal_logger = logger.get_terminal_logger()
 
     def log(self, level, message):
-        """统一的日志方法 - 只用于UI显示，不写入终端日志"""
+        """统一的日志方法 - 使用UnifiedLogger"""
         if self.logger:
             self.logger.log(level, message)
         else:
             print(f"[{level}] {message}")
+
+    def log_terminal_send(self, data):
+        """记录发送到终端的数据"""
+        if self.terminal_logger:
+            self.terminal_logger.log_send(data)
+
+    def log_terminal_receive(self, data):
+        """记录从终端接收的数据"""
+        if self.terminal_logger:
+            self.terminal_logger.log_receive(data)
+
+    def log_terminal_expect(self, pattern):
+        """记录期望的模式"""
+        if self.terminal_logger:
+            self.terminal_logger.log_expect(str(pattern))
+
+    def log_terminal_timeout(self):
+        """记录超时"""
+        if self.terminal_logger:
+            self.terminal_logger.log_timeout()
+
+    def expect_with_logging(self, pattern_list, timeout=None):
+        """带日志记录的expect方法"""
+        self.log_terminal_expect(pattern_list)
+        try:
+            result = self.child.expect(pattern_list, timeout=timeout)
+            # 记录匹配到的内容
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+            if self.child.after:
+                self.log_terminal_receive(self.child.after)
+            return result
+        except pexpect.TIMEOUT:
+            self.log_terminal_timeout()
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+            raise
+        except Exception as e:
+            self.log("错误", f"expect操作异常: {e}")
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+            raise
+
+    def sendline_with_logging(self, data):
+        """带日志记录的sendline方法"""
+        self.log_terminal_send(data + "\n")
+        self.child.sendline(data)
 
     def create_session_directory(self):
         """创建测试会话目录结构"""
@@ -225,13 +274,6 @@ class sys_read:
             self.child = pexpect.spawn('/bin/bash', ['-c', '/usr/local/bin/nanocom -y'],
                                        encoding='utf-8', codec_errors='replace')
 
-            # # 改为启动bash
-            # self.child = pexpect.spawn('/bin/bash',
-            #                            encoding='utf-8', codec_errors='replace', timeout=TIMEOUT)
-            # self.child.expect(r'\$')  # 等待bash提示符
-            # TARGET_PROMPT_STRING = "$"  # 修改提示符
-            # TARGET_PROMPT_REGEX = re.escape(TARGET_PROMPT_STRING)
-
             # 设置终端大小
             self.child.setwinsize(24, 80)
 
@@ -283,8 +325,8 @@ class sys_read:
                 r'(?i)password:',  # 索引 2 (Password only)
                 re.escape(":)"),  # 索引 3 (Diags)
                 # re.escape("]"),  # 索引 4 (Recovery)
-                pexpect.TIMEOUT,  # 索引 5 (Booting/Unknown)
-                pexpect.EOF  # 索引 6 (Crashed)
+                pexpect.TIMEOUT,  # 索引 4 (Booting/Unknown)
+                pexpect.EOF  # 索引 5 (Crashed)
             ], timeout=TIMEOUT)
 
             if index == 0:  # OS Mode
@@ -318,11 +360,6 @@ class sys_read:
                 self.log("错误", "检测到 Diags 模式 (':)')")
                 self.log("错误", "命令无法在此模式下执行, 脚本终止。")
                 return
-
-            # elif index == 4:  # Recovery
-            #     self.log("错误", "检测到 Recovery 模式 (']')")
-            #     self.log("错误", "命令无法在此模式下执行, 脚本终止。")
-            #     return
 
             elif index == 4:  # TIMEOUT
                 self.log("错误", f"发送 'Enter' 后超时 ({TIMEOUT}秒)")

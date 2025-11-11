@@ -1,5 +1,4 @@
 # utils/logger.py
-import os
 import json
 from datetime import datetime
 from pathlib import Path
