@@ -84,7 +84,7 @@ class RebootLogCollector:
         lines = response.split('\n')
         for line in lines:
             if 'SrNm | STR  |' in line:
-                sn = line.split('|')[2].strip()
+                sn = line.split('|')[3].strip()
                 self.log("程序输出", f"获取到设备序列号: {sn}")
                 return sn
 
@@ -171,7 +171,7 @@ class RebootLogCollector:
 
         try:
             # 构建保存路径
-            save_path = f"/Desktop/{self.device_serial}/{filename}.txt"
+            save_path = f"/var/tmp/{self.device_serial}/{filename}.txt"
 
             # 运行命令并重定向输出到文件
             full_command = f"{command} > {save_path}"
@@ -263,7 +263,7 @@ class RebootLogCollector:
         }
 
         # 在设备上创建文件夹
-        device_folder = f"/Desktop/{self.device_serial}"
+        device_folder = f"/var/tmp/{self.device_serial}"
         self.log("程序输出", f"在设备上创建文件夹: {device_folder}")
         self.sendline_with_logging(f"mkdir -p {device_folder}")
         self.expect_with_logging("local@locals-Mac", timeout=5)
@@ -299,15 +299,46 @@ class RebootLogCollector:
             except:
                 pass
 
+    def get_device_ip(self) -> str:
+        """获取设备的 IP 地址"""
+        if not self.child:
+            return "locals-Mac.local"
+
+        self.log("程序输出", "正在获取设备 IP 地址...")
+
+        try:
+            # 方法1: 使用 ifconfig 获取 IP
+            self.sendline_with_logging("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | head -1 | awk '{print $2}'")
+            self.expect_with_logging("local@locals-Mac", timeout=5)
+            response = self.child.before.decode()
+
+            # 提取 IP 地址
+            lines = response.split('\n')
+            for line in lines:
+                ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+                if ip_match:
+                    ip = ip_match.group(1)
+                    self.log("程序输出", f"获取到设备 IP 地址: {ip}")
+                    return ip
+
+            self.log("警告", "无法获取设备 IP 地址，使用默认主机名")
+            return "locals-Mac.local"
+
+        except Exception as e:
+            self.log("错误", f"获取设备 IP 地址失败: {e}")
+            return "locals-Mac.local"
+
     def scp_from_device(self, device_folder: str):
         """在主机上执行SCP命令从设备复制文件夹"""
         # 在主机上创建目标文件夹
         host_folder = self.host_desktop_path / self.device_serial
         host_folder.mkdir(parents=True, exist_ok=True)
 
+        device_ip = self.get_device_ip()
+
         # 通过scp将文件夹从设备复制到主机
         self.log("程序输出", "在主机上执行SCP命令...")
-        scp_command = f"scp -r local@locals-Mac.local:{device_folder} {host_folder}"
+        scp_command = f"scp -r local@{device_ip}:{device_folder} {host_folder}"
         self.log("程序输出", f"执行SCP命令: {scp_command}")
 
         try:
@@ -328,8 +359,7 @@ class RebootLogCollector:
                 scp_child.logfile_read = self.terminal_logger.log_file
                 scp_child.logfile_send = self.terminal_logger.log_file
 
-            scp_result = scp_child.expect(['Are you sure you want to continue connecting (yes/no/[fingerprint])?:',
-                                           'Password:',
+            scp_result = scp_child.expect(['Are you sure you want to continue connecting',
                                            pexpect.TIMEOUT,
                                            pexpect.EOF], timeout=10)
 
@@ -337,22 +367,22 @@ class RebootLogCollector:
                 scp_child.sendline("yes")
                 scp_result = scp_child.expect(['Password:', pexpect.TIMEOUT, pexpect.EOF], timeout=5)
 
-            if scp_result == 1 or scp_result == 0:  # 需要密码
-                scp_child.sendline("local")
-                self.log("程序输出", "开始SCP传输")
+                if scp_result == 0:  # 需要密码
+                    scp_child.sendline("local")
+                    self.log("程序输出", "开始SCP传输")
 
-                # 等待传输完成
-                scp_child.expect(pexpect.EOF, timeout=60)
-                self.log("程序输出", "SCP传输完成")
+                    # 等待传输完成
+                    scp_child.expect(pexpect.EOF, timeout=60)
+                    self.log("程序输出", "SCP传输完成")
 
-                # 记录成功
-                if self.logger:
-                    self.logger.log_command(
-                        "文件传输",
-                        f"SCP从设备复制文件夹: {device_folder}",
-                        "成功",
-                        {"源路径": device_folder, "目标路径": str(host_folder)}
-                    )
+                    # 记录成功
+                    if self.logger:
+                        self.logger.log_command(
+                            "文件传输",
+                            f"SCP从设备复制文件夹: {device_folder}",
+                            "成功",
+                            {"源路径": device_folder, "目标路径": str(host_folder)}
+                        )
             else:
                 self.log("错误", "SCP传输失败或超时")
                 if self.logger:

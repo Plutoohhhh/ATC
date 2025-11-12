@@ -12,6 +12,7 @@ pyinstaller --onefile --windowed --name="ATC" \
   --hidden-import=routes.sysconfig_read \
   --hidden-import=pexpect \
 --hidden-import=glob \
+--hidden-import=json \
   --hidden-import=pty \
   --hidden-import=fcntl \
   --add-data="commands:commands" \
