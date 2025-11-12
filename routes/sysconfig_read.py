@@ -131,7 +131,7 @@ class sys_read:
             # 完整的终端会话日志文件路径
             log_file_path = os.path.join(self.test_session_path, LOG_FILE_NAME)
 
-            # 打开原始日志文件 - 记录所有原始字节，包括控制字符
+            # 打开原始日志文件 - 使用二进制写入模式，避免编码问题
             self.raw_log_file = open(log_file_path, 'wb')
             self.session_start_time = datetime.now()
 
@@ -142,36 +142,47 @@ class sys_read:
             self.log("错误", f"设置日志文件失败: {e}")
             return False
 
-    def create_complete_terminal_logger(self):
-        """创建完整的终端日志记录器 - 记录所有输入输出"""
+    def create_raw_terminal_logger(self):
+        """创建原始终端日志记录器 - 直接记录所有原始数据，不进行额外处理"""
 
-        class CompleteTerminalLogger:
+        class RawTerminalLogger:
             def __init__(self, raw_log_file, ui_logger):
                 self.raw_log_file = raw_log_file
                 self.ui_logger = ui_logger
-                self.pending_command = None
+                self.buffer = b''  # 使用字节缓冲区
 
             def write(self, data):
-                # 记录所有原始字节到文件
+                # 如果是字符串，转换为字节
                 if isinstance(data, str):
                     data_bytes = data.encode('utf-8', errors='replace')
                 else:
                     data_bytes = data
 
-                # 写入文件 - 这是关键，记录所有原始数据
+                # 直接写入原始字节到文件，不进行额外处理
                 self.raw_log_file.write(data_bytes)
                 self.raw_log_file.flush()
 
-                # 处理数据显示到UI
-                self._process_for_ui(data_bytes)
+                # 同时更新缓冲区用于UI显示
+                self.buffer += data_bytes
+                self._process_buffer_for_ui()
 
-            def _process_for_ui(self, data_bytes):
-                """处理数据用于UI显示"""
+            def _process_buffer_for_ui(self):
+                """处理缓冲区数据用于UI显示"""
                 try:
-                    decoded = data_bytes.decode('utf-8', errors='replace')
+                    # 尝试解码为UTF-8
+                    decoded = self.buffer.decode('utf-8', errors='ignore')
 
-                    # 将重要信息发送到UI
+                    # 按行分割，处理完整的行
                     lines = decoded.split('\n')
+
+                    # 如果最后一行不完整，保留在缓冲区中
+                    if not decoded.endswith('\n'):
+                        self.buffer = lines[-1].encode('utf-8')
+                        lines = lines[:-1]
+                    else:
+                        self.buffer = b''
+
+                    # 处理完整的行
                     for line in lines:
                         line = line.strip()
                         if not line:
@@ -190,13 +201,14 @@ class sys_read:
                             self.ui_logger.log("系统输出", "进入目标系统")
 
                 except Exception as e:
-                    pass
+                    # 如果解码失败，清空缓冲区
+                    self.buffer = b''
 
             def flush(self):
                 self.raw_log_file.flush()
 
             def log_command(self, command):
-                """专门记录命令 - 确保命令被记录"""
+                """专门记录命令"""
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 # 在UI中显示命令
                 self.ui_logger.log("命令输入", f"执行命令: {command}")
@@ -205,18 +217,7 @@ class sys_read:
                 self.raw_log_file.write(command_bytes)
                 self.raw_log_file.flush()
 
-        return CompleteTerminalLogger(self.raw_log_file, self.logger)
-
-    def send_command_with_logging(self, command, description=None):
-        """发送命令并确保完整记录"""
-        if description:
-            self.log("程序输出", description)
-
-        # 使用专门的命令记录方法
-        self.terminal_logger.log_command(command)
-
-        # 发送命令
-        self.child.sendline(command)
+        return RawTerminalLogger(self.raw_log_file, self.logger)
 
     def find_port_number(self, output_before):
         """动态查找 C-line 或 S-line 端口"""
@@ -253,7 +254,7 @@ class sys_read:
     def wait_for_prompt(self, timeout=30):
         """等待目标提示符出现"""
         try:
-            self.child.expect(TARGET_PROMPT_REGEX, timeout=timeout)
+            self.expect_with_logging(TARGET_PROMPT_REGEX, timeout=timeout)
             return True
         except pexpect.TIMEOUT:
             self.log("错误", f"等待提示符超时 ({timeout}秒)")
@@ -270,61 +271,50 @@ class sys_read:
             self.log("系统", "自动化脚本启动")
             self.log("系统", f"目标 OS 提示符已设为: '{TARGET_PROMPT_STRING}'")
 
-            # 启动 nanocom 进程 - 使用与 terminal_collect.py 相同的参数
-            self.child = pexpect.spawn('/bin/bash', ['-c', '/usr/local/bin/nanocom -y'],
-                                       encoding='utf-8', codec_errors='replace')
+            # 启动 nanocom 进程
+            self.child = pexpect.spawn('/usr/local/bin/nanocom -y', timeout=TIMEOUT)
 
-            # 设置终端大小
-            self.child.setwinsize(24, 80)
-
-            # 创建完整的终端日志记录器
-            self.terminal_logger = self.create_complete_terminal_logger()
-            self.child.logfile = self.terminal_logger
+            # 创建原始终端日志记录器
+            raw_logger = self.create_raw_terminal_logger()
+            self.child.logfile = raw_logger
 
             # 动态端口选择
             self.log("程序输出", "正在等待 nanocom 加载设备列表...")
 
             # 等待设备列表
             try:
-                self.child.expect(r'Select a device by its number', timeout=TIMEOUT)
-            except (pexpect.exceptions.TIMEOUT, pexpect.exceptions.EOF) as e:
+                self.expect_with_logging([r'Select a device by its number'], timeout=TIMEOUT)
+            except (pexpect.TIMEOUT, pexpect.EOF) as e:
                 self.log("错误", "启动 nanocom 后未找到 'Select a device' 提示")
-                # 记录错误信息到日志文件
-                error_msg = f"\n[ERROR] 未找到设备选择提示: {e}\n"
-                self.raw_log_file.write(error_msg.encode('utf-8'))
                 return
 
             # 获取设备列表输出并查找端口
-            output_before = self.child.before
+            output_before = self.child.before.decode('utf-8', errors='ignore') if self.child.before else ""
             port_number = self.find_port_number(output_before)
 
             if not port_number:
                 self.log("错误", "没有找到可用端口 (C-line 或 S-line)")
-                # 记录错误信息到日志文件
-                error_msg = f"\n[ERROR] 没有找到可用端口\n设备列表:\n{output_before}\n"
-                self.raw_log_file.write(error_msg.encode('utf-8'))
                 return
 
             self.log("程序输出", f"最终选择端口: {port_number}")
 
             # 发送端口选择命令
-            self.send_command_with_logging(port_number, "选择设备端口")
+            self.sendline_with_logging(port_number)
 
             # 等待连接建立
             time.sleep(2)
 
             # 发送回车唤醒提示符
-            self.send_command_with_logging("", "发送回车唤醒提示符")
+            self.sendline_with_logging("")
 
             # 检测系统状态
             self.log("程序输出", "正在检测机台状态...")
 
-            index = self.child.expect([
+            index = self.expect_with_logging([
                 TARGET_PROMPT_REGEX,  # 索引 0 (OS Mode)
                 r'(?i)login:|(?i)username:',  # 索引 1 (Login needed)
                 r'(?i)password:',  # 索引 2 (Password only)
                 re.escape(":)"),  # 索引 3 (Diags)
-                # re.escape("]"),  # 索引 4 (Recovery)
                 pexpect.TIMEOUT,  # 索引 4 (Booting/Unknown)
                 pexpect.EOF  # 索引 5 (Crashed)
             ], timeout=TIMEOUT)
@@ -338,10 +328,10 @@ class sys_read:
                     self.log("错误", "检测到登录提示, 但脚本中未配置 USERNAME/PASSWORD")
                     return
                 self.log("程序输出", "状态: 需要登录。正在发送用户名")
-                self.send_command_with_logging(USERNAME, "发送用户名")
-                self.child.expect(r'(?i)password:')
+                self.sendline_with_logging(USERNAME)
+                self.expect_with_logging([r'(?i)password:'], timeout=5)
                 self.log("程序输出", "正在发送密码")
-                self.send_command_with_logging(PASSWORD, "发送密码")
+                self.sendline_with_logging(PASSWORD)
                 if not self.wait_for_prompt():
                     return
                 self.log("程序输出", f"登录成功, 已进入 OS 模式 ({TARGET_PROMPT_STRING})")
@@ -351,7 +341,7 @@ class sys_read:
                     self.log("错误", "检测到密码提示, 但脚本中未配置 PASSWORD")
                     return
                 self.log("程序输出", "状态: 需要密码。正在发送密码")
-                self.send_command_with_logging(PASSWORD, "发送密码")
+                self.sendline_with_logging(PASSWORD)
                 if not self.wait_for_prompt():
                     return
                 self.log("程序输出", f"登录成功, 已进入 OS 模式 ({TARGET_PROMPT_STRING})")
@@ -375,7 +365,8 @@ class sys_read:
 
             for cmd in COMMANDS_TO_RUN:
                 # 发送命令
-                self.send_command_with_logging(cmd, f"执行命令: {cmd}")
+                self.sendline_with_logging(cmd)
+                raw_logger.log_command(cmd)  # 特别记录命令
 
                 # 等待命令完成
                 if not self.wait_for_prompt():
@@ -385,22 +376,17 @@ class sys_read:
 
             self.log("系统", "所有命令在机台执行完毕")
 
-        except (pexpect.exceptions.TIMEOUT, pexpect.exceptions.EOF) as e:
+        except (pexpect.TIMEOUT, pexpect.EOF) as e:
             self.log("错误", f"脚本执行期间发生严重错误: {e}")
-            # 记录错误到日志文件
-            error_msg = f"\n[ERROR] 严重错误: {e}\n"
-            self.raw_log_file.write(error_msg.encode('utf-8'))
         except Exception as e:
             self.log("错误", f"发生意外的 Python 错误: {e}")
-            # 记录错误到日志文件
-            error_msg = f"\n[ERROR] Python错误: {e}\n"
-            self.raw_log_file.write(error_msg.encode('utf-8'))
         finally:
             # 记录会话结束
             end_time = datetime.now()
             duration = end_time - self.session_start_time
             session_end = f"\n\n=== 会话结束 ===\n时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n持续时间: {duration}\n"
-            self.raw_log_file.write(session_end.encode('utf-8'))
+            if self.raw_log_file:
+                self.raw_log_file.write(session_end.encode('utf-8'))
 
             # 清理资源
             if self.child and self.child.isalive():

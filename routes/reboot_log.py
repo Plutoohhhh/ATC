@@ -76,17 +76,17 @@ class RebootLogCollector:
             return "unknown_device"
 
         self.log("程序输出", "正在获取设备序列号...")
-        self.sendline_with_logging("system_profiler SPHardwareDataType | grep 'Serial Number' | awk '{print $4}'")
-        self.expect_with_logging("local@locals-Mac ~ %", timeout=5)
+        self.sendline_with_logging("sysconfig read -a")
+        self.expect_with_logging("local@locals-Mac", timeout=5)
         response = self.child.before.decode()
 
         # 提取序列号
         lines = response.split('\n')
         for line in lines:
-            if len(line.strip()) > 5 and not line.startswith("system_profiler"):
-                serial = line.strip()
-                self.log("程序输出", f"获取到设备序列号: {serial}")
-                return serial
+            if 'SrNm | STR  |' in line:
+                sn = line.split('|')[2].strip()
+                self.log("程序输出", f"获取到设备序列号: {sn}")
+                return sn
 
         self.log("警告", "无法获取设备序列号，使用默认名称")
         return "unknown_device"
@@ -133,7 +133,7 @@ class RebootLogCollector:
 
             # 等待登录提示
             expect_result = self.expect_with_logging(
-                [pexpect.TIMEOUT, "login:", "local@locals-Mac ~ %"], timeout=30
+                [pexpect.TIMEOUT, "login:", "local@locals-Mac"], timeout=30
             )
 
             if expect_result == 1:  # 检测到登录提示
@@ -147,12 +147,16 @@ class RebootLogCollector:
                     self.sendline_with_logging("local")
 
                 # 验证登录成功
-                if self.expect_with_logging([pexpect.TIMEOUT, "local@locals-Mac ~ %"], timeout=60) == 1:
+                if self.expect_with_logging([pexpect.TIMEOUT, "local@locals-Mac"], timeout=60) == 1:
                     self.log("程序输出", "登录成功!")
 
                     # 获取设备序列号和IP地址
                     self.device_serial = self.get_device_serial_number()
                     return True
+
+            if expect_result == 2:
+                self.log("程序输出", "已进入OS")
+                return True
 
             self.log("错误", "登录失败")
             return False
@@ -160,6 +164,53 @@ class RebootLogCollector:
         except Exception as e:
             self.log("错误", f"nanocom连接失败: {e}")
             return False
+
+    def run_command_and_save(self, command: str, filename: str) -> bool:
+
+        self.log("程序输出", f"开始在设备上运行命令: {command}")
+
+        try:
+            # 构建保存路径
+            save_path = f"/Desktop/{self.device_serial}/{filename}.txt"
+
+            # 运行命令并重定向输出到文件
+            full_command = f"{command} > {save_path}"
+            self.sendline_with_logging(full_command)
+
+            except_result = self.expect_with_logging(
+                [pexpect.TIMEOUT, "local@locals-Mac"],
+                timeout=10  # 稍微增加超时时间
+            )
+
+            if except_result == 1:
+                self.log("程序输出", f"✅ {filename}.txt 已生成并保存到设备")
+
+                # 验证文件是否创建成功
+                self.sendline_with_logging(f"test -f {save_path} && echo 'FILE_EXISTS' || echo 'FILE_MISSING'")
+                self.expect_with_logging("local@locals-Mac")
+                response = self.child.before.decode()
+
+                if "FILE_EXISTS" in response:
+                    self.log("程序输出", f"✅ 文件创建验证成功: {filename}.txt")
+                    return True
+                else:
+                    self.log("警告", f"文件可能未成功创建: {filename}.txt")
+                    return False
+            else:
+                self.log("错误", f"命令执行超时: {command}")
+                return False
+
+        except Exception as e:
+            self.log("错误", f"运行命令 {command} 失败: {e}")
+            return False
+
+    def run_nvram(self) -> bool:
+        """运行nvram命令并保存结果"""
+        return self.run_command_and_save("nvram -p", "nvram")
+
+    def run_astro(self) -> bool:
+        """运行astro命令并保存结果"""
+        return self.run_command_and_save("astro status", "astro_status")
 
     def run_sysdiagnose(self) -> bool:
         """在设备上运行sysdiagnose命令"""
@@ -175,7 +226,6 @@ class RebootLogCollector:
                 timeout=5
             )
 
-
             if expect_result == 1:  # 检测到继续提示
                 self.log("程序输出", "按下Enter继续...")
                 self.sendline_with_logging("")  # 发送回车
@@ -183,7 +233,7 @@ class RebootLogCollector:
                 # 等待sysdiagnose完成
                 self.log("程序输出", "等待sysdiagnose完成")
                 expect_result = self.expect_with_logging(
-                    [pexpect.TIMEOUT, "Output available at", "local@locals-Mac ~ %"],
+                    [pexpect.TIMEOUT, "Output available at", "local@locals-Mac"],
                     timeout=600  # 10分钟超时
                 )
 
@@ -216,7 +266,7 @@ class RebootLogCollector:
         device_folder = f"/Desktop/{self.device_serial}"
         self.log("程序输出", f"在设备上创建文件夹: {device_folder}")
         self.sendline_with_logging(f"mkdir -p {device_folder}")
-        self.expect_with_logging("local@locals-Mac ~ %", timeout=5)
+        self.expect_with_logging("local@locals-Mac", timeout=5)
 
         # 复制文件到设备上的文件夹
         for log_name, device_path in log_paths.items():
@@ -224,13 +274,13 @@ class RebootLogCollector:
 
             # 检查设备上路径是否存在
             self.sendline_with_logging(f"test -e {device_path} && echo 'EXISTS' || echo 'NOT_EXISTS'")
-            self.expect_with_logging("local@locals-Mac ~ %")
+            self.expect_with_logging("local@locals-Mac")
             response = self.child.before.decode()
 
             if "EXISTS" in response:
                 # 复制文件或目录
                 self.sendline_with_logging(f"cp -r {device_path} {device_folder}/")
-                self.expect_with_logging("local@locals-Mac ~ %")
+                self.expect_with_logging("local@locals-Mac")
                 self.log("程序输出", f"已复制: {device_path}")
             else:
                 self.log("警告", f"路径不存在: {device_path}")
@@ -328,6 +378,10 @@ class RebootLogCollector:
 
         try:
             if self.auto_login_via_nanocom():
+
+                self.run_nvram()
+                self.run_astro()
+
                 # 在设备上运行sysdiagnose
                 if self.run_sysdiagnose():
                     # 在设备上复制文件
