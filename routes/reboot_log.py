@@ -44,16 +44,30 @@ class RebootLogCollector:
             self.terminal_logger.log_timeout()
 
     def expect_with_logging(self, pattern_list, timeout=None):
-        """带日志记录的expect方法"""
-        self.log_terminal_expect(pattern_list)
+        """带日志记录的expect方法，增加对quote>状态的检测"""
+        # 确保包含 quote> 检测
+        full_patterns = list(pattern_list) + ["quote>"]
+
+        self.log_terminal_expect(full_patterns)
         try:
-            result = self.child.expect(pattern_list, timeout=timeout)
+            result = self.child.expect(full_patterns, timeout=timeout)
+
             # 记录匹配到的内容
             if self.child.before:
                 self.log_terminal_receive(self.child.before)
             if self.child.after:
                 self.log_terminal_receive(self.child.after)
+
+            # 如果检测到 quote> 状态，进行处理
+            if result == full_patterns.index("quote>"):
+                self.log("警告", "检测到 quote> 状态，发送 Ctrl+C 退出")
+                self.child.sendintr()  # 发送 Ctrl+C
+                time.sleep(0.5)
+                # 重新尝试期望的模式
+                result = self.child.expect(pattern_list, timeout=timeout)
+
             return result
+
         except pexpect.TIMEOUT:
             self.log_terminal_timeout()
             if self.child.before:
@@ -255,8 +269,8 @@ class RebootLogCollector:
         """在设备上创建文件夹并复制日志文件"""
         # 日志路径定义
         log_paths = {
-            "kernel_panics": "/private/var/tmp/kernel_panics",
-            "sys_tmp": "/private/var/tmp",
+            # "kernel_panics": "/private/var/tmp/kernel_panics",
+            # "sys_tmp": "/private/var/tmp",
             "crash_reporter": "/Library/logs/CrashReporter/CoreCapture",
             "burnin": "/Users/local/Library/Logs/Astro/@osdiags/factory/burnin.astro",
             "os_logs": "/FactoryLogs/"
@@ -308,7 +322,7 @@ class RebootLogCollector:
 
         try:
             # 方法1: 使用 ifconfig 获取 IP
-            self.sendline_with_logging("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | head -1 | awk '{print $2}'")
+            self.sendline_with_logging("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | head -1")
             self.expect_with_logging("local@locals-Mac", timeout=5)
             response = self.child.before.decode()
 
@@ -336,6 +350,16 @@ class RebootLogCollector:
 
         device_ip = self.get_device_ip()
 
+        try:
+            ssh_known_hosts_path = Path.home() / ".ssh" / "known_hosts"
+            if ssh_known_hosts_path.exists():
+                ssh_known_hosts_path.unlink()  # 删除文件
+                self.log("程序输出", "已删除 ~/.ssh/known_hosts 文件")
+            else:
+                self.log("调试", "~/.ssh/known_hosts 文件不存在，无需删除")
+        except Exception as e:
+            self.log("警告", f"删除 known_hosts 文件失败: {e}")
+
         # 通过scp将文件夹从设备复制到主机
         self.log("程序输出", "在主机上执行SCP命令...")
         scp_command = f"scp -r local@{device_ip}:{device_folder} {host_folder}"
@@ -352,7 +376,7 @@ class RebootLogCollector:
                 )
 
             # 使用pexpect执行SCP命令并自动输入密码
-            scp_child = pexpect.spawn(scp_command)
+            scp_child = pexpect.spawn(scp_command, encoding='utf-8')
 
             # 设置终端日志记录
             if self.terminal_logger:
@@ -372,7 +396,7 @@ class RebootLogCollector:
                     self.log("程序输出", "开始SCP传输")
 
                     # 等待传输完成
-                    scp_child.expect(pexpect.EOF, timeout=60)
+                    scp_child.expect(pexpect.EOF, timeout=600)
                     self.log("程序输出", "SCP传输完成")
 
                     # 记录成功
@@ -408,25 +432,20 @@ class RebootLogCollector:
 
         try:
             if self.auto_login_via_nanocom():
+                # 在设备上运行sysdiagnose
+                self.run_sysdiagnose()
+                # 在设备上复制文件
+                device_folder = self.copy_files_on_device()
 
                 self.run_nvram()
                 self.run_astro()
 
-                # 在设备上运行sysdiagnose
-                if self.run_sysdiagnose():
-                    # 在设备上复制文件
-                    device_folder = self.copy_files_on_device()
+                # 在主机上执行SCP命令
+                self.scp_from_device(device_folder)
 
-                    # 关闭nanocom连接
-                    self.close_nanocom()
-
-                    # 在主机上执行SCP命令
-                    self.scp_from_device(device_folder)
-
-                    host_folder = self.host_desktop_path / self.device_serial
-                    self.log("系统", f"日志收集完成! 保存到: {host_folder}")
-                else:
-                    self.log("错误", "sysdiagnose执行失败")
+                host_folder = self.host_desktop_path / self.device_serial
+                self.log("系统", f"日志收集完成! 保存到: {host_folder}")
+                self.close_nanocom()
             else:
                 self.log("错误", "设备连接失败")
 
@@ -438,12 +457,6 @@ class RebootLogCollector:
 
 
 def main():
-    try:
-        import pexpect
-    except ImportError:
-        print("错误: 需要 pexpect 模块")
-        print("请运行: pip install pexpect")
-        return
 
     # 创建日志记录器
     from utils.logger import UnifiedLogger
