@@ -43,10 +43,19 @@ class RebootLogCollector:
         if self.terminal_logger:
             self.terminal_logger.log_timeout()
 
-    def expect_with_logging(self, pattern_list, timeout=None):
+    def _ensure_pattern_list(self, patterns):
+        """确保模式是列表形式"""
+        if isinstance(patterns, str):
+            return [patterns]
+        return list(patterns)
+
+    def expect_with_logging(self, patterns, timeout=None):
         """带日志记录的expect方法，增加对quote>状态的检测"""
-        # 确保包含 quote> 检测
-        full_patterns = list(pattern_list) + ["quote>"]
+        # 确保模式是列表形式
+        pattern_list = self._ensure_pattern_list(patterns)
+
+        # 添加quote>检测到模式列表
+        full_patterns = pattern_list + ["quote>"]
 
         self.log_terminal_expect(full_patterns)
         try:
@@ -59,7 +68,7 @@ class RebootLogCollector:
                 self.log_terminal_receive(self.child.after)
 
             # 如果检测到 quote> 状态，进行处理
-            if result == full_patterns.index("quote>"):
+            if result == len(full_patterns) - 1:  # quote>是最后一个模式
                 self.log("警告", "检测到 quote> 状态，发送 Ctrl+C 退出")
                 self.child.sendintr()  # 发送 Ctrl+C
                 time.sleep(0.5)
@@ -91,7 +100,7 @@ class RebootLogCollector:
 
         self.log("程序输出", "正在获取设备序列号...")
         self.sendline_with_logging("sysconfig read -a")
-        self.expect_with_logging("local@locals-Mac", timeout=5)
+        self.expect_with_logging(["local@locals-Mac"], timeout=5)
         response = self.child.before.decode()
 
         # 提取序列号
@@ -180,7 +189,6 @@ class RebootLogCollector:
             return False
 
     def run_command_and_save(self, command: str, filename: str) -> bool:
-
         self.log("程序输出", f"开始在设备上运行命令: {command}")
 
         try:
@@ -193,15 +201,14 @@ class RebootLogCollector:
 
             except_result = self.expect_with_logging(
                 [pexpect.TIMEOUT, "local@locals-Mac"],
-                timeout=10  # 稍微增加超时时间
+                timeout=10
             )
 
             if except_result == 1:
-                self.log("程序输出", f"✅ {filename}.txt 已生成并保存到设备")
 
                 # 验证文件是否创建成功
                 self.sendline_with_logging(f"test -f {save_path} && echo 'FILE_EXISTS' || echo 'FILE_MISSING'")
-                self.expect_with_logging("local@locals-Mac")
+                self.expect_with_logging(["local@locals-Mac"], timeout=5)
                 response = self.child.before.decode()
 
                 if "FILE_EXISTS" in response:
@@ -251,7 +258,7 @@ class RebootLogCollector:
                     timeout=600  # 10分钟超时
                 )
 
-                if expect_result == 1 or expect_result == 2:  # sysdiagnose完成
+                if expect_result in [1, 2]:  # sysdiagnose完成
                     self.log("程序输出", "sysdiagnose完成")
                     return True
                 else:
@@ -269,18 +276,16 @@ class RebootLogCollector:
         """在设备上创建文件夹并复制日志文件"""
         # 日志路径定义
         log_paths = {
-            # "kernel_panics": "/private/var/tmp/kernel_panics",
-            # "sys_tmp": "/private/var/tmp",
             "crash_reporter": "/Library/logs/CrashReporter/CoreCapture",
             "burnin": "/Users/local/Library/Logs/Astro/@osdiags/factory/burnin.astro",
-            "os_logs": "/FactoryLogs/"
+            "os_logs": "/FactoryLogs"
         }
 
         # 在设备上创建文件夹
         device_folder = f"/var/tmp/{self.device_serial}"
         self.log("程序输出", f"在设备上创建文件夹: {device_folder}")
         self.sendline_with_logging(f"mkdir -p {device_folder}")
-        self.expect_with_logging("local@locals-Mac", timeout=5)
+        self.expect_with_logging(["local@locals-Mac"], timeout=5)
 
         # 复制文件到设备上的文件夹
         for log_name, device_path in log_paths.items():
@@ -288,13 +293,13 @@ class RebootLogCollector:
 
             # 检查设备上路径是否存在
             self.sendline_with_logging(f"test -e {device_path} && echo 'EXISTS' || echo 'NOT_EXISTS'")
-            self.expect_with_logging("local@locals-Mac")
+            self.expect_with_logging(["local@locals-Mac"], timeout=5)
             response = self.child.before.decode()
 
             if "EXISTS" in response:
                 # 复制文件或目录
                 self.sendline_with_logging(f"cp -r {device_path} {device_folder}/")
-                self.expect_with_logging("local@locals-Mac")
+                self.expect_with_logging(["local@locals-Mac"])
                 self.log("程序输出", f"已复制: {device_path}")
             else:
                 self.log("警告", f"路径不存在: {device_path}")
@@ -323,7 +328,7 @@ class RebootLogCollector:
         try:
             # 方法1: 使用 ifconfig 获取 IP
             self.sendline_with_logging("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | head -1")
-            self.expect_with_logging("local@locals-Mac", timeout=5)
+            self.expect_with_logging(["local@locals-Mac"], timeout=5)
             response = self.child.before.decode()
 
             # 提取 IP 地址
@@ -353,16 +358,14 @@ class RebootLogCollector:
         try:
             ssh_known_hosts_path = Path.home() / ".ssh" / "known_hosts"
             if ssh_known_hosts_path.exists():
-                ssh_known_hosts_path.unlink()  # 删除文件
+                ssh_known_hosts_path.unlink()
                 self.log("程序输出", "已删除 ~/.ssh/known_hosts 文件")
-            else:
-                self.log("调试", "~/.ssh/known_hosts 文件不存在，无需删除")
         except Exception as e:
             self.log("警告", f"删除 known_hosts 文件失败: {e}")
 
         # 通过scp将文件夹从设备复制到主机
         self.log("程序输出", "在主机上执行SCP命令...")
-        scp_command = f"scp -r local@{device_ip}:{device_folder} {host_folder}"
+        scp_command = f"scp -r local@{device_ip}:/var/tmp {host_folder}"
         self.log("程序输出", f"执行SCP命令: {scp_command}")
 
         try:
@@ -451,13 +454,10 @@ class RebootLogCollector:
 
         except Exception as e:
             self.log("错误", f"脚本执行错误: {e}")
-
-            # 确保关闭nanocom连接
             self.close_nanocom()
 
 
 def main():
-
     # 创建日志记录器
     from utils.logger import UnifiedLogger
     logger = UnifiedLogger()
