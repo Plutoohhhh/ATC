@@ -70,41 +70,45 @@ class UnifiedLogger(QObject):
     log_signal = pyqtSignal(str, str)  # level, message
     command_signal = pyqtSignal(dict)  # 命令数据
 
-    def __init__(self, log_to_file=True, log_file_path=None, command_log_path=None):
+    def __init__(self, session_path=None, log_to_file=True):
         super().__init__()
         self.log_to_file = log_to_file
-        self.log_file_path = log_file_path or self.get_default_log_path()
-        self.command_log_path = command_log_path or self.get_default_command_log_path()
-        self.terminal_log_path = self.get_default_terminal_log_path()
+        self.session_path = session_path
+
+        # 延迟初始化日志文件路径，直到session_path可用
+        self.log_file_path = None
+        self.command_log_path = None
+        self.terminal_log_path = None
 
         self.log_file = None
         self.command_log_file = None
         self.terminal_logger = None
 
-        if self.log_to_file:
+        # 如果提供了session_path，立即设置日志文件
+        if self.session_path and self.log_to_file:
             self.setup_log_files()
 
-    def get_default_log_path(self):
-        """获取默认日志文件路径"""
-        desktop = Path.home() / "Desktop"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return desktop / f"atc_log_{timestamp}.log"
-
-    def get_default_command_log_path(self):
-        """获取默认命令日志文件路径"""
-        desktop = Path.home() / "Desktop"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return desktop / f"atc_commands_{timestamp}.json"
-
-    def get_default_terminal_log_path(self):
-        """获取默认终端日志文件路径"""
-        desktop = Path.home() / "Desktop"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return desktop / f"atc_terminal_{timestamp}.log"
+    def set_session_path(self, session_path):
+        """设置会话路径并初始化日志文件"""
+        self.session_path = session_path
+        if self.log_to_file and not self.log_file:
+            self.setup_log_files()
 
     def setup_log_files(self):
         """设置日志文件和命令日志文件"""
+        if not self.session_path:
+            raise ValueError("Session path must be set before setting up log files")
+
         try:
+            # 确保会话目录存在
+            Path(self.session_path).mkdir(parents=True, exist_ok=True)
+
+            # 设置日志文件路径
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.log_file_path = Path(self.session_path) / f"atc_log_{timestamp}.log"
+            # self.command_log_path = Path(self.session_path) / f"atc_commands_{timestamp}.json"
+            self.terminal_log_path = Path(self.session_path) / f"atc_terminal_{timestamp}.log"
+
             # 设置普通日志文件
             self.log_file = open(self.log_file_path, 'a', encoding='utf-8')
             self.log("系统", f"日志文件: {self.log_file_path}")

@@ -1,11 +1,15 @@
 # atc.py (重构版本)
 import sys
 from datetime import datetime
+from pathlib import Path
+
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QTextEdit, QScrollArea,
                              QSizePolicy, QFrame)
 from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QTextCursor, QColor
+
+from commands.scout_validate_command import ScoutValidateCommand
 from utils.logger import UnifiedLogger
 from commands.nanocom_command import NanocomCommand
 from commands.reboot_log_command import RebootLogCommand
@@ -27,21 +31,36 @@ class CommandThread(QThread):
 class LogWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # 创建日志目录
+        self.session_path = self.create_session_directory()
         # 创建统一的日志记录器
-        self.logger = UnifiedLogger(log_to_file=True)
+        self.logger = UnifiedLogger(session_path=self.session_path, log_to_file=True)
         self.logger.log_signal.connect(self.add_log)
 
         self.initUI()
         self.setup_commands()
 
+    def create_session_directory(self):
+        """创建会话目录"""
+        desktop = Path.home() / "Desktop"
+        session_dir = desktop / "ATC_Logs" / datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_dir.mkdir(parents=True, exist_ok=True)
+        return str(session_dir)
+
     def setup_commands(self):
-        default_spartan_name = "YourSpartanModemName"  # 修改为实际的名称
         """设置可用的命令"""
         self.commands = {
             "nanocom": NanocomCommand(self.logger),
             "reboot_log": RebootLogCommand(self.logger),
+            "scout_validate": ScoutValidateCommand(self.logger),
             # 后续添加新命令只需在这里注册
         }
+
+        # 为每个命令设置会话路径（如果命令类支持）
+        for command_name, command in self.commands.items():
+            if hasattr(command, 'set_session_path'):
+                command.set_session_path(self.session_path)
 
     def initUI(self):
         # 设置窗口标题和大小
@@ -81,6 +100,7 @@ class LogWindow(QMainWindow):
             ("清空日志", "clear_log", self.clear_log),
             ("执行 Nanocom", "nanocom", lambda: self.execute_command("nanocom")),
             ("执行 reboot_log", "reboot_log", lambda: self.execute_command("reboot_log")),
+            ("执行 scout_validate", "scout_validate", lambda: self.execute_command("scout_validate")),
             # 添加新命令按钮只需在这里添加一行
         ]
 

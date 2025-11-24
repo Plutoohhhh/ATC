@@ -1,5 +1,4 @@
 import subprocess
-import re
 
 
 class AC_vali():
