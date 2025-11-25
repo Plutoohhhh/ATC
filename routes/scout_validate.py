@@ -69,6 +69,13 @@ class ScoutValidate:
 
             return result
 
+        except pexpect.EOF:
+            # EOF不是错误，只是命令执行完成
+            if self.child.before:
+                self.log_terminal_receive(self.child.before)
+            self.log_terminal_receive("命令执行完成 (EOF)")
+            return 0  # 返回成功状态
+
         except pexpect.TIMEOUT:
             self.log_terminal_timeout()
             if self.child.before:
@@ -121,14 +128,23 @@ class ScoutValidate:
             # 使用 pexpect 执行命令
             self.child = pexpect.spawn(command, encoding='utf-8', timeout=600)
 
-            # 等待命令执行完成，直到出现提示符 "~ %"
-            self.expect_with_logging('~ %', timeout=600)
+            # 等待命令执行完成，可以接受EOF或提示符
+            try:
+                # 首先尝试等待提示符
+                self.expect_with_logging('~ %', timeout=600)
+                # 如果成功等到提示符，命令在交互式环境中执行
+                output = self.child.before
+                self.child.close()
+                return_code = self.child.exitstatus if self.child.exitstatus is not None else 0
 
-            # 获取命令输出
-            output = self.child.before
+            except pexpect.EOF:
+                # 如果遇到EOF，命令直接执行完毕
+                output = self.child.before
+                self.child.close()
+                return_code = self.child.exitstatus if self.child.exitstatus is not None else 0
 
-            # 关闭子进程并获取退出状态码
-            self.child.close()
+                # 记录EOF是正常情况，不是错误
+                self.log("程序输出", f"命令 '{command}' 执行完成 (EOF)，返回码: {return_code}")
 
             # 获取返回码
             if self.child.exitstatus is not None:
@@ -190,7 +206,6 @@ class ScoutValidate:
 
         try:
             self.execute_commands_from_config("../UI/config.json")
-            self.log("系统", "完成执行: ScoutValidateCommand")
         except Exception as e:
             self.log("错误", f"脚本执行错误: {e}")
 
