@@ -8,9 +8,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QSizePolicy, QFrame, QToolButton, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QTextCursor, QColor
-
-from commands.scout_insight_command import ScoutInsightCommand, ScoutConfigManager
-from commands.scout_validate_command import ScoutValidateCommand
+from commands.scout_validate_command import ScoutValidateCommand, ScoutConfigManager
 from utils.logger import UnifiedLogger
 from commands.nanocom_command import NanocomCommand
 from commands.reboot_log_command import RebootLogCommand
@@ -55,7 +53,6 @@ class LogWindow(QMainWindow):
             "nanocom": NanocomCommand(self.logger),
             "reboot_log": RebootLogCommand(self.logger),
             "scout_validate": ScoutValidateCommand(self.logger),
-            "scout_insight": ScoutInsightCommand(self.logger),  # 新增
             # 后续添加新命令只需在这里注册
         }
 
