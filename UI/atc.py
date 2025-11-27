@@ -5,10 +5,11 @@ from pathlib import Path
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QTextEdit, QScrollArea,
-                             QSizePolicy, QFrame)
+                             QSizePolicy, QFrame, QToolButton, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QTextCursor, QColor
 
+from commands.scout_insight_command import ScoutInsightCommand, ScoutConfigManager
 from commands.scout_validate_command import ScoutValidateCommand
 from utils.logger import UnifiedLogger
 from commands.nanocom_command import NanocomCommand
@@ -54,6 +55,7 @@ class LogWindow(QMainWindow):
             "nanocom": NanocomCommand(self.logger),
             "reboot_log": RebootLogCommand(self.logger),
             "scout_validate": ScoutValidateCommand(self.logger),
+            "scout_insight": ScoutInsightCommand(self.logger),  # 新增
             # 后续添加新命令只需在这里注册
         }
 
@@ -101,21 +103,73 @@ class LogWindow(QMainWindow):
             ("执行 Nanocom", "nanocom", lambda: self.execute_command("nanocom")),
             ("执行 reboot_log", "reboot_log", lambda: self.execute_command("reboot_log")),
             ("执行 scout_validate", "scout_validate", lambda: self.execute_command("scout_validate")),
+            # 新增 Scout Insight 按钮，带设置图标
+            ("Scout Insight", "scout_insight", self.execute_scout_insight),
             # 添加新命令按钮只需在这里添加一行
         ]
 
         self.buttons = {}
         for text, command_name, slot in buttons_info:
-            button = QPushButton(text)
-            button.setMinimumHeight(40)
-            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            button.clicked.connect(slot)
-            left_layout.addWidget(button)
-            self.buttons[command_name] = button
+            # if command_name == "scout_insight":
+                # 为 Scout Insight 创建带设置按钮的布局
+            scout_layout = QHBoxLayout()
+            scout_layout.setSpacing(5)
+
+            # 主按钮
+            main_button = QPushButton(text)
+            main_button.setMinimumHeight(40)
+            main_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            main_button.clicked.connect(slot)
+            scout_layout.addWidget(main_button)
+
+            # 设置按钮（齿轮图标）
+            settings_button = QToolButton()
+            settings_button.setText("⚙")  # 使用文本符号作为齿轮图标
+            settings_button.setToolTip("配置 Scout Insight 参数")
+            settings_button.setFixedSize(30, 40)
+            settings_button.clicked.connect(self.configure_scout_insight)
+            scout_layout.addWidget(settings_button)
+
+            left_layout.addLayout(scout_layout)
+            self.buttons[command_name] = main_button
+            # else:
+            #     button = QPushButton(text)
+            #     button.setMinimumHeight(40)
+            #     button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            #     button.clicked.connect(slot)
+            #     left_layout.addWidget(button)
+            #     self.buttons[command_name] = button
 
         # 添加弹性空间
         left_layout.addStretch(1)
         main_layout.addWidget(self.left_widget)
+
+    def execute_scout_insight(self):
+        """执行 Scout Insight 命令"""
+        # 检查是否已配置
+        scout_command = self.commands["scout_insight"]
+        if not scout_command.config:
+            QMessageBox.warning(self, "配置错误", "请先配置 Scout Insight 参数")
+            return
+
+        self.execute_command("scout_insight")
+
+    def configure_scout_insight(self):
+        """配置 Scout Insight 参数（在主线程中执行）"""
+        if "scout_insight" in self.commands:
+            # 使用配置管理器在主线程中显示对话框
+            config_manager = ScoutConfigManager()
+            config_manager.config_received.connect(self._on_scout_config_received)
+            config_manager.show_dialog()
+        else:
+            self.logger.log("错误", "Scout Insight 命令未找到")
+
+    def _on_scout_config_received(self, config):
+        """Scout配置接收回调"""
+        scout_command = self.commands["scout_insight"]
+        scout_command.set_config(config)
+        self.logger.log("系统", "Scout Insight 配置已更新")
+        self.logger.log("程序输出", f"新配置: {config}")
 
     def execute_command(self, command_name):
         """执行指定命令"""
@@ -148,7 +202,7 @@ class LogWindow(QMainWindow):
         self.log_text.setStyleSheet("""
             QTextEdit {
                 background-color: #1e1e1e;
-                color: #d4d4d4;
+                color: #ffffff;
                 border: 1px solid #555;
                 border-radius: 5px;
                 padding: 10px;
@@ -190,36 +244,36 @@ class LogWindow(QMainWindow):
 
         # 根据日志级别设置颜色
         color_map = {
-            "错误": "#f44747",
-            "警告": "#ff8800",
-            "信息": "#4ec9b0",
-            "系统": "#569cd6",
-            "程序输出": "#dcdcaa",
-            "命令输入": "#ce9178",
-            "系统输出": "#9cdcfe",
-            "自动": "#c586c0"
+            "错误": "#ff6b6b",    # 更亮的红色
+            "警告": "#ffa94d",    # 更亮的橙色
+            "信息": "#51cf66",    # 更亮的绿色
+            "系统": "#339af0",    # 更亮的蓝色
+            "程序输出": "#ffd43b", # 更亮的黄色
+            "命令输入": "#ff8787", # 更亮的粉红色
+            "系统输出": "#74c0fc", # 更亮的浅蓝色
+            "自动": "#da77f2"     # 更亮的紫色
         }
 
-        color = color_map.get(level, "#d4d4d4")
+        color = color_map.get(level, "#ffffff")
 
         # 添加带颜色的文本
         cursor = self.log_text.textCursor()
         cursor.movePosition(QTextCursor.End)
 
         # 插入带格式的文本
-        self.log_text.setTextColor(Qt.white)
+        self.log_text.setTextColor(QColor("#adb5bd"))  # 灰色时间戳
         self.log_text.insertPlainText(f"[{timestamp}] ")
 
-        self.log_text.setTextColor(Qt.gray)
+        self.log_text.setTextColor(QColor("#868e96"))  # 灰色括号
         self.log_text.insertPlainText("[")
 
-        self.log_text.setTextColor(self.get_color(color))
+        self.log_text.setTextColor(self.get_color(color))  # 彩色级别
         self.log_text.insertPlainText(level)
 
-        self.log_text.setTextColor(Qt.gray)
+        self.log_text.setTextColor(QColor("#868e96"))  # 灰色括号
         self.log_text.insertPlainText("] ")
 
-        self.log_text.setTextColor(Qt.white)
+        self.log_text.setTextColor(QColor("#ffffff"))  # 白色消息
         self.log_text.insertPlainText(f"{message}\n")
 
         # 自动滚动到底部
@@ -254,15 +308,65 @@ def main():
             border-radius: 5px;
             padding: 8px;
             font-size: 12px;
+            font-weight: bold;
         }
         QPushButton:hover {
             background-color: #4a4a4f;
+            border: 1px solid #666;
         }
         QPushButton:pressed {
             background-color: #007acc;
+            color: #ffffff;
+        }
+        QPushButton:disabled {
+            background-color: #2d2d30;
+            color: #666666;
+            border: 1px solid #444;
+        }
+        QToolButton {
+            background-color: #3e3e42;
+            color: #ffffff;
+            border: 1px solid #555;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        QToolButton:hover {
+            background-color: #4a4a4f;
+            border: 1px solid #666;
+        }
+        QToolButton:pressed {
+            background-color: #007acc;
+            color: #ffffff;
         }
         QWidget {
             background-color: #2d2d30;
+            color: #ffffff;
+        }
+        QLabel {
+            color: #ffffff;
+            background-color: transparent;
+        }
+        QLineEdit {
+            background-color: #3e3e42;
+            color: #ffffff;
+            border: 1px solid #555;
+            border-radius: 3px;
+            padding: 5px;
+            selection-background-color: #007acc;
+        }
+        QLineEdit:focus {
+            border: 1px solid #007acc;
+        }
+        QDialog {
+            background-color: #2d2d30;
+            color: #ffffff;
+        }
+        QMessageBox {
+            background-color: #2d2d30;
+            color: #ffffff;
+        }
+        QMessageBox QLabel {
+            color: #ffffff;
         }
     """)
 
