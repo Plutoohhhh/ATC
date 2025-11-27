@@ -205,7 +205,7 @@ class ScoutValidate:
         self.log("系统", "=== Scout 验证脚本开始 ===")
 
         try:
-            self.execute_commands_from_config("../UI/pexpect_config.json")
+            self.execute_commands_from_config("../uis/pexpect_config.json")
         except Exception as e:
             self.log("错误", f"脚本执行错误: {e}")
 

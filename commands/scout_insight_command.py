@@ -4,7 +4,6 @@ from PyQt5.QtWidgets import QApplication
 from utils.command_runner import CommandRunner
 from routes import scout_insight
 from PyQt5.QtCore import pyqtSignal, QObject
-import threading
 
 
 class ScoutConfigManager(QObject):
