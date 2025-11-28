@@ -1,9 +1,10 @@
 # core/command_manager.py
 from PyQt5.QtCore import QObject, pyqtSignal
-from commands.nanocom_command import NanocomCommand
+# from commands.nanocom_command import NanocomCommand
 from commands.reboot_log_command import RebootLogCommand
 from commands.scout_validate_command import ScoutValidateCommand
 from commands.scout_insight_command import ScoutInsightCommand, ScoutConfigManager
+from commands.sysconfig_read_command import NanocomCommand
 
 
 class CommandManager(QObject):

@@ -5,18 +5,24 @@ import os
 from typing import Optional, List, Tuple
 from pathlib import Path
 
+# 导入工具类
+from utils.session_manager import SessionManager, EventHandlers
+
 
 class ScoutAutomation:
     def __init__(self, logger=None):
         self.logger = logger
         self.terminal_logger = None
         self.child = None
+        self.session_manager = SessionManager("Scout_Logs", logger)
+
         if logger:
             self.terminal_logger = logger.get_terminal_logger()
 
     def set_logger(self, logger):
         """设置统一的日志记录器"""
         self.logger = logger
+        self.session_manager.set_logger(logger)
         if logger:
             self.terminal_logger = logger.get_terminal_logger()
 
@@ -79,6 +85,19 @@ class ScoutAutomation:
     def start_scout_session(self, sn: str, station: str, user_path: str):
         """启动scout会话并执行命令"""
         try:
+            # 使用会话管理器设置完整会话
+            event_handlers = {
+                r'authenticating': EventHandlers.create_auth_handler(self.logger),
+                r'please select file': lambda line: self.logger.log("系统输出", "等待选择文件..."),
+                r'saved in|done': EventHandlers.create_completion_handler(self.logger),
+                r'error|failed': EventHandlers.create_completion_handler(self.logger)
+            }
+
+            if not self.session_manager.setup_complete_session(
+                    "scout", "scout_terminal.log", event_handlers
+            ):
+                self.log("警告", "会话设置失败，将继续执行但可能无法记录终端输出")
+
             # 构建scout命令
             scout_cmd = f"scout insight --sn='{sn}' --station='{station}' --download_log --user_path='{user_path}'"
             self.log("程序输出", f"执行命令: {scout_cmd}")
@@ -87,7 +106,10 @@ class ScoutAutomation:
             self.child = pexpect.spawn('/bin/bash', ['-c', scout_cmd], encoding='utf-8', timeout=60)
 
             # 设置终端日志记录
-            if self.terminal_logger:
+            if self.session_manager.raw_terminal_logger:
+                self.child.logfile = self.session_manager.raw_terminal_logger
+            elif self.terminal_logger:
+                # 回退到原来的方式
                 self.child.logfile_read = self.terminal_logger.log_file
                 self.child.logfile_send = self.terminal_logger.log_file
 
@@ -240,6 +262,9 @@ class ScoutAutomation:
             # 清理资源
             if self.child and self.child.isalive():
                 self.child.close()
+
+            # 清理会话管理器资源
+            self.session_manager.cleanup()
 
 
 # 使用示例和外部接口函数

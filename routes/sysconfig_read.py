@@ -6,52 +6,35 @@ import os
 import os.path
 from datetime import datetime
 
+# 导入工具类
+from utils.session_manager import SessionManager, EventHandlers
+
 # --- 配置区: 请根据你的需求修改 ---
 
-# 1. 要执行的命令列表
-COMMANDS_TO_RUN = [
-    "pwd",
-    "ls",
-    "date"
-    # 在这里添加更多你需要的命令...
-]
-
-# 2. 登录凭据 (如果不需要登录, 保持为 None)
+# --- 配置区: 请根据你的需求修改 ---
+COMMANDS_TO_RUN = ["pwd", "ls", "date"]
 USERNAME = 'local'
 PASSWORD = 'local'
-
-# 3. [重要] 机台的 OS 模式提示符 (来自你的 Chimp_serial.txt 日志)
 TARGET_PROMPT_STRING = "local@locals-Mac ~ %"
 TARGET_PROMPT_REGEX = re.escape(TARGET_PROMPT_STRING)
-
-# 4. 基础日志文件名
 LOG_FILE_NAME = "nanocom_session.log"
-
-# 5. 超时设置 (秒)
 TIMEOUT = 15
 
 
 class sys_read:
     def __init__(self):
         self.logger = None
-        self.raw_log_file = None
-        self.session_start_time = None
-        self.test_session_path = None
-        self.terminal_logger = None
         self.child = None
+        self.session_manager = SessionManager("ATC_Logs")
 
     def set_logger(self, logger):
         """设置统一的日志记录器"""
         self.logger = logger
-        if logger:
-            self.terminal_logger = logger.get_terminal_logger()
+        self.session_manager.set_logger(logger)
 
     def log(self, level, message):
-        """统一的日志方法 - 使用UnifiedLogger"""
-        if self.logger:
-            self.logger.log(level, message)
-        else:
-            print(f"[{level}] {message}")
+        """统一的日志方法"""
+        self.session_manager.log(level, message)
 
     def log_terminal_send(self, data):
         """记录发送到终端的数据"""
@@ -264,7 +247,17 @@ class sys_read:
             return False
 
     def main(self, keep_alive=False):
-        if not self.setup_logging():
+        # 使用会话管理器设置完整会话
+        event_handlers = {
+            r'serial device': lambda line: self.logger.log("系统输出", f"发现设备: {line}"),
+            r'select a device by its number': lambda line: self.logger.log("系统输出", "等待选择设备..."),
+            r'login:|username:': EventHandlers.create_login_handler(self.logger),
+            r'password:': lambda line: self.logger.log("系统输出", "需要密码"),
+            TARGET_PROMPT_STRING: EventHandlers.create_prompt_handler(self.logger, TARGET_PROMPT_REGEX)
+        }
+
+        if not self.session_manager.setup_complete_session("nanocom", LOG_FILE_NAME, event_handlers):
+            self.log("错误", "会话设置失败")
             return
 
         try:
@@ -274,9 +267,9 @@ class sys_read:
             # 启动 nanocom 进程
             self.child = pexpect.spawn('/usr/local/bin/nanocom -y', timeout=TIMEOUT)
 
-            # 创建原始终端日志记录器
-            raw_logger = self.create_raw_terminal_logger()
-            self.child.logfile = raw_logger
+            # 设置终端日志记录
+            if self.session_manager.raw_terminal_logger:
+                self.child.logfile = self.session_manager.raw_terminal_logger
 
             # 动态端口选择
             self.log("程序输出", "正在等待 nanocom 加载设备列表...")
@@ -365,14 +358,15 @@ class sys_read:
 
             for cmd in COMMANDS_TO_RUN:
                 # 发送命令
-                self.sendline_with_logging(cmd)
-                raw_logger.log_command(cmd)  # 特别记录命令
+                self.child.sendline(cmd)
+                if self.session_manager.raw_terminal_logger:
+                    self.session_manager.raw_terminal_logger.log_command(cmd)
 
                 # 等待命令完成
                 if not self.wait_for_prompt():
                     break
 
-                time.sleep(0.5)  # 命令间的小延迟
+                time.sleep(0.5)
 
             self.log("系统", "所有命令在机台执行完毕")
 
@@ -381,19 +375,13 @@ class sys_read:
         except Exception as e:
             self.log("错误", f"发生意外的 Python 错误: {e}")
         finally:
-            # 记录会话结束
-            end_time = datetime.now()
-            duration = end_time - self.session_start_time
-            session_end = f"\n\n=== 会话结束 ===\n时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n持续时间: {duration}\n"
-            if self.raw_log_file:
-                self.raw_log_file.write(session_end.encode('utf-8'))
-
             # 清理资源
             if self.child and self.child.isalive():
                 self.child.terminate()
-            if self.raw_log_file:
-                self.raw_log_file.close()
-            self.log("系统", f"脚本结束，完整日志保存在: {self.test_session_path}")
+
+            # 清理会话管理器资源
+            self.session_manager.cleanup()
+            self.log("系统", f"脚本结束，完整日志保存在: {self.session_manager.get_session_path()}")
 
 
 if __name__ == "__main__":
