@@ -1,5 +1,3 @@
-# util/logger.py
-import json
 from datetime import datetime
 from pathlib import Path
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -68,7 +66,6 @@ class UnifiedLogger(QObject):
 
     # 信号用于UI更新
     log_signal = pyqtSignal(str, str)  # level, message
-    command_signal = pyqtSignal(dict)  # 命令数据
 
     def __init__(self, session_path=None, log_to_file=True):
         super().__init__()
@@ -77,11 +74,9 @@ class UnifiedLogger(QObject):
 
         # 延迟初始化日志文件路径，直到session_path可用
         self.log_file_path = None
-        self.command_log_path = None
         self.terminal_log_path = None
 
         self.log_file = None
-        self.command_log_file = None
         self.terminal_logger = None
 
         # 如果提供了session_path，立即设置日志文件
@@ -95,7 +90,7 @@ class UnifiedLogger(QObject):
             self.setup_log_files()
 
     def setup_log_files(self):
-        """设置日志文件和命令日志文件"""
+        """设置日志文件和终端日志文件"""
         if not self.session_path:
             raise ValueError("Session path must be set before setting up log files")
 
@@ -106,21 +101,11 @@ class UnifiedLogger(QObject):
             # 设置日志文件路径
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.log_file_path = Path(self.session_path) / f"atc_log_{timestamp}.log"
-            # self.command_log_path = Path(self.session_path) / f"atc_commands_{timestamp}.json"
             self.terminal_log_path = Path(self.session_path) / f"atc_terminal_{timestamp}.log"
 
             # 设置普通日志文件
             self.log_file = open(self.log_file_path, 'a', encoding='utf-8')
             self.log("系统", f"日志文件: {self.log_file_path}")
-
-            # 设置命令日志文件
-            self.command_log_file = open(self.command_log_path, 'a', encoding='utf-8')
-            self.log("系统", f"命令日志文件: {self.command_log_path}")
-
-            # 在命令日志文件开头写入空数组，确保是有效的JSON
-            self.command_log_file.write("[\n")
-            self.command_log_file.flush()
-            self.first_command = True
 
             # 设置终端日志记录器
             self.terminal_logger = TerminalLogger(self.terminal_log_path)
@@ -145,49 +130,6 @@ class UnifiedLogger(QObject):
             self.log_file.write(formatted_message + "\n")
             self.log_file.flush()
 
-    def log_command(self, command_type, details, result="success", additional_info=None):
-        """
-        记录命令/动作
-
-        参数:
-        - command_type: 命令类型，如 "文件操作", "数据处理", "系统设置" 等
-        - details: 命令详细描述
-        - result: 执行结果，"success" 或 "failed"
-        - additional_info: 额外的信息字典
-        """
-        command_data = {
-            "timestamp": datetime.now().isoformat(),
-            "type": command_type,
-            "details": details,
-            "result": result,
-            "additional_info": additional_info or {}
-        }
-
-        # 发送命令信号（用于UI显示或其他处理）
-        self.command_signal.emit(command_data)
-
-        # 记录到普通日志
-        self.log("命令", f"{command_type}: {details} - {result}")
-
-        # 保存到命令日志文件
-        if self.log_to_file and self.command_log_file:
-            try:
-                # 如果不是第一条命令，先添加逗号和换行
-                if not hasattr(self, 'first_command'):
-                    self.first_command = True
-
-                if not self.first_command:
-                    self.command_log_file.write(",\n")
-                else:
-                    self.first_command = False
-
-                # 写入命令数据
-                json.dump(command_data, self.command_log_file, ensure_ascii=False, indent=2)
-                self.command_log_file.flush()
-
-            except Exception as e:
-                print(f"写入命令日志失败: {e}")
-
     def get_terminal_logger(self):
         """获取终端日志记录器"""
         return self.terminal_logger
@@ -196,14 +138,6 @@ class UnifiedLogger(QObject):
         """关闭日志记录器"""
         if self.log_file:
             self.log_file.close()
-
-        if self.command_log_file:
-            try:
-                # 在命令日志文件结尾闭合JSON数组
-                self.command_log_file.write("\n]")
-                self.command_log_file.close()
-            except Exception as e:
-                print(f"关闭命令日志文件失败: {e}")
 
         if self.terminal_logger:
             self.terminal_logger.close()

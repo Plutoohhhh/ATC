@@ -7,3 +7,6 @@ dist/
 ATC.spec
 
 test.py
+
+routes/subprocess_config.json
+routes/pexpect_config.json

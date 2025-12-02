@@ -90,15 +90,24 @@ class CommandManager(QObject):
         return False
 
     def _configure_scout_validate(self, parent):
-        """配置 Scout Validate"""
-        from PyQt5.QtWidgets import QInputDialog
-        timeout, ok = QInputDialog.getInt(
-            parent, "配置 Scout Validate", "设置超时时间(秒):", 30, 5, 300, 5
-        )
-        if ok and hasattr(self.commands["scout_validate"], 'set_timeout'):
-            self.commands["scout_validate"].set_timeout(timeout)
-            self.log_signal.emit("程序输出", f"Scout Validate 超时时间设置为: {timeout} 秒")
+        """配置 Scout Validate - 委托给命令类处理"""
+        command = self.get_command("scout_validate")
+        if not command:
+            self.log_signal.emit("错误", "Scout Validate 命令未找到")
+            return False
+
+        # 获取配置
+        config = command.get_config_from_dialog()
+        if config:
+            # 设置配置到命令
+            command.set_config(config)
+            self.log_signal.emit("系统", "Scout Validate 配置已更新")
+            if config.get('subprocess_config'):
+                self.log_signal.emit("程序输出", f"非交互式配置文件: {config['subprocess_config']}")
+            if config.get('pexpect_config'):
+                self.log_signal.emit("程序输出", f"交互式配置文件: {config['pexpect_config']}")
             return True
+
         return False
 
     def _on_scout_config_received(self, config):
