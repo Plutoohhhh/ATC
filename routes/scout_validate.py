@@ -12,6 +12,7 @@ class ScoutValidate:
         self.terminal_logger = None
         self.session_path = None
         self.child = None
+        self.radar_id = None # 默认雷达号
 
     def set_logger(self, logger):
         self.logger = logger
@@ -123,6 +124,15 @@ class ScoutValidate:
         except Exception as e:
             self.log("错误", f"移动 /tmp/scout 失败: {str(e)}")
 
+    def replace_radar_id_in_command(self, command: str) -> str:
+        """替换命令中的雷达号占位符"""
+        if "{radar}" in command:
+            return command.replace("{radar}", self.radar_id)
+        elif "163084325" in command:
+            # 如果配置文件中有硬编码的雷达号，也替换它
+            return command.replace("163084325", self.radar_id)
+        return command
+
     def create_directory_structure(self, config: Dict, base_path: Path, use_pexpect=False):
         """
         递归创建目录结构并执行命令
@@ -135,11 +145,12 @@ class ScoutValidate:
                 # 如果是字典，继续递归
                 self.create_directory_structure(value, current_path, use_pexpect)
             elif isinstance(value, str):
-                # 如果是字符串，执行命令
+                # 如果是字符串，执行命令前替换雷达号
+                command = self.replace_radar_id_in_command(value)
                 if use_pexpect:
-                    self.execute_with_pexpect(value, current_path)
+                    self.execute_with_pexpect(command, current_path)
                 else:
-                    self.execute_with_subprocess(value, current_path)
+                    self.execute_with_subprocess(command, current_path)
 
                 # 每条命令执行后，移动scout文件夹
                 self.move_scout_folder(current_path)
@@ -273,14 +284,18 @@ class ScoutValidate:
                 self.child.close()
             self.child = None
 
-    def set_config_paths(self, subprocess_config, pexpect_config):
+    def set_config_paths(self, subprocess_config, pexpect_config, radar_id=None):
         """设置自定义配置文件路径"""
         self.subprocess_config = subprocess_config
         self.pexpect_config = pexpect_config
+        if radar_id:
+            self.radar_id = radar_id
+            self.log("系统", f"设置雷达号为: {self.radar_id}")
 
     def main(self):
         """主执行方法"""
         self.log("系统", "=== Scout 验证脚本开始 ===")
+        self.log("系统", f"使用雷达号: {self.radar_id}")
 
         try:
             # 使用自定义路径或默认路径

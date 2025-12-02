@@ -5,6 +5,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt5.QtCore import pyqtSignal, QObject
 from utils.command_runner import CommandRunner
 from routes import scout_validate
+import json
+from pathlib import Path
 
 
 class ScoutValidateConfigManager(QObject):
@@ -25,11 +27,22 @@ class ScoutValidateConfigManager(QObject):
             def __init__(self, parent=None):
                 super().__init__(parent)
                 self.setWindowTitle("配置 Scout Validate")
-                self.resize(500, 300)
+                self.resize(500, 400)
                 self.setup_ui()
 
             def setup_ui(self):
                 layout = QVBoxLayout()
+
+                # 雷达号设置组
+                radar_group = QGroupBox("雷达号设置")
+                radar_layout = QFormLayout()
+
+                self.radar_edit = QLineEdit()
+                self.radar_edit.setPlaceholderText("请输入雷达号...")
+                radar_layout.addRow("雷达号:", self.radar_edit)
+
+                radar_group.setLayout(radar_layout)
+                layout.addWidget(radar_group)
 
                 # 配置文件设置组
                 config_group = QGroupBox("配置文件路径")
@@ -96,6 +109,7 @@ class ScoutValidateConfigManager(QObject):
             def get_config(self):
                 """获取配置数据"""
                 return {
+                    'radar_id': self.radar_edit.text().strip(),
                     'subprocess_config': self.subprocess_edit.text(),
                     'pexpect_config': self.pexpect_edit.text()
                 }
@@ -117,6 +131,7 @@ class ScoutValidateCommand(CommandRunner):
         self.timeout = 30
         self.subprocess_config = None
         self.pexpect_config = None
+        self.radar_id = "163084325"  # 默认雷达号
 
     def get_config_from_dialog(self):
         """通过配置管理器获取配置"""
@@ -133,6 +148,7 @@ class ScoutValidateCommand(CommandRunner):
         self.config = config
         # 应用配置
         if config:
+            self.radar_id = config.get('radar_id', "163084325")
             self.subprocess_config = config.get('subprocess_config')
             self.pexpect_config = config.get('pexpect_config')
 
@@ -140,14 +156,17 @@ class ScoutValidateCommand(CommandRunner):
         """设置超时时间"""
         self.timeout = timeout
 
-    def set_config_paths(self, subprocess_config, pexpect_config):
+    def set_config_paths(self, subprocess_config, pexpect_config, radar_id=None):
         """设置配置文件路径"""
         self.subprocess_config = subprocess_config
         self.pexpect_config = pexpect_config
+        if radar_id:
+            self.radar_id = radar_id
 
     def set_config(self, config):
         """设置配置（从主线程调用）"""
         if config:
+            self.radar_id = config.get('radar_id', "163084325")
             self.subprocess_config = config.get('subprocess_config')
             self.pexpect_config = config.get('pexpect_config')
             self.config = config
@@ -159,6 +178,7 @@ class ScoutValidateCommand(CommandRunner):
             return False
 
         self.logger.log("系统", "开始执行 Scout Validate")
+        self.logger.log("程序输出", f"使用的雷达号: {self.radar_id}")
         if self.subprocess_config:
             self.logger.log("程序输出", f"非交互式配置文件: {self.subprocess_config}")
         if self.pexpect_config:
@@ -170,7 +190,7 @@ class ScoutValidateCommand(CommandRunner):
 
             # 如果有自定义配置文件路径，传递给 ScoutValidate
             if hasattr(scouter, 'set_config_paths') and self.subprocess_config and self.pexpect_config:
-                scouter.set_config_paths(self.subprocess_config, self.pexpect_config)
+                scouter.set_config_paths(self.subprocess_config, self.pexpect_config, self.radar_id)
 
             return scouter.main()
 
