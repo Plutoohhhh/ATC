@@ -1,5 +1,7 @@
 import json
 import subprocess
+import time
+
 import pexpect
 import shutil
 from pathlib import Path
@@ -177,6 +179,9 @@ class ScoutValidate:
 
         self.log("程序输出", f"开始执行命令(非交互式): {command}")
 
+        # 记录要执行的命令到终端日志
+        self.log_terminal_send(f"执行非交互式命令: {command}")
+
         try:
             # 使用 subprocess 执行命令
             result = subprocess.run(
@@ -192,6 +197,8 @@ class ScoutValidate:
             full_output = result.stdout
             if result.stderr:
                 full_output += f"\n--- 错误输出 ---\n{result.stderr}"
+
+            self.log_terminal_receive(full_output) if full_output.strip() else self.log_terminal_receive("(空输出)")
 
             # 保存输出到文件
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -223,6 +230,9 @@ class ScoutValidate:
         output_file = output_dir / "output.txt"
 
         self.log("程序输出", f"开始执行命令(交互式): {command}")
+
+        # 记录要执行的命令到终端日志
+        self.log_terminal_send(f"执行命令: {command}")
 
         try:
             # 使用 pexpect 执行命令
