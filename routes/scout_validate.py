@@ -237,33 +237,71 @@ class ScoutValidate:
         try:
             # 使用 pexpect 执行命令
             self.child = pexpect.spawn(command, encoding='utf-8', timeout=600)
+            output = ""
 
-            # 检查是否需要选择串行设备
-            try:
-                # 等待设备选择提示
-                device_selection = self.expect_with_logging(['Choose a serial device:', pexpect.EOF, pexpect.TIMEOUT],
-                                                            timeout=600)
+            # 设置交互处理模式列表
+            patterns = [
+                'Choose a (serial device|device):',  # 设备选择提示
+                'Update Radar Diagnosis',  # 雷达诊断更新提示
+                pexpect.EOF,  # 命令结束
+                pexpect.TIMEOUT  # 超时
+            ]
 
-                if device_selection == 0:  # 找到设备选择提示
-                    self.log("程序输出", "检测到设备选择提示，自动选择设备 0")
-                    self.sendline_with_logging("0")  # 选择第一个设备
+            while True:
+                try:
+                    # 等待匹配模式
+                    index = self.expect_with_logging(patterns, timeout=600)
 
-                    # 等待命令完成
-                    self.expect_with_logging(pexpect.EOF, timeout=600)
+                    # 将当前输出添加到总输出
+                    if self.child.before:
+                        output += self.child.before
 
-                # 获取命令输出
-                output = self.child.before
+                    # 根据匹配到的模式处理
+                    if index == 0:  # 设备选择提示
+                        self.log("程序输出", "检测到设备选择提示，自动选择设备 0")
+                        self.sendline_with_logging("0")
 
-                # 获取返回码
-                self.child.close()
-                return_code = self.child.exitstatus if self.child.exitstatus is not None else 0
+                        # 继续等待其他提示
+                        continue
 
-            except pexpect.TIMEOUT:
-                self.log("错误", f"命令 '{command}' 执行超时")
-                output = self.child.before if self.child else "命令执行超时"
-                return_code = 124
-                if self.child and self.child.isalive():
-                    self.child.close()
+                    elif index == 1:  # 雷达诊断更新提示
+                        self.log("程序输出", "检测到雷达诊断更新提示，自动选择 N")
+                        self.sendline_with_logging("N")
+
+                        # 继续等待其他提示
+                        continue
+
+                    elif index == 2:  # EOF，命令执行完成
+                        self.log("程序输出", "命令执行完成 (EOF)")
+                        break
+
+                    elif index == 3:  # 超时
+                        self.log("错误", f"命令 '{command}' 执行超时")
+                        output += self.child.before if self.child else "命令执行超时"
+                        break
+
+                except pexpect.EOF:
+                    # EOF不是错误，只是命令执行完成
+                    if self.child.before:
+                        output += self.child.before
+                    self.log("程序输出", "命令执行完成 (EOF)")
+                    break
+
+                except pexpect.TIMEOUT:
+                    self.log("错误", f"命令 '{command}' 执行超时")
+                    if self.child.before:
+                        output += self.child.before
+                    break
+
+                except Exception as e:
+                    self.log("错误", f"交互处理异常: {e}")
+                    if self.child.before:
+                        output += self.child.before
+                    break
+
+            # 获取返回码
+            self.child.close()
+            return_code = self.child.exitstatus if self.child.exitstatus is not None else 0
 
             # 保存输出到文件
             with open(output_file, 'w', encoding='utf-8') as f:
